@@ -3,7 +3,10 @@ use std::{
     net::SocketAddr,
     path::{Path, PathBuf},
     str::FromStr,
-    sync::{Arc, Mutex as StdMutex},
+    sync::{
+        Arc, Mutex as StdMutex,
+        atomic::{AtomicU64, Ordering},
+    },
     time::{Duration, SystemTime, UNIX_EPOCH},
 };
 
@@ -28,7 +31,7 @@ use tokio::{
 use tokio_util::sync::CancellationToken;
 use tower_http::trace::TraceLayer;
 use tracing::{Span, debug, error, info};
-use wsrx::{ProxyStats, TrafficObserver, proxy_observed};
+use wsrx::{ProxyStats, TrafficDirection, TrafficObserver, proxy_observed};
 
 use crate::cli::{
     capture::{
@@ -153,6 +156,57 @@ struct ConnectionAudit {
     capture_path: Option<String>,
     captured_bytes: u64,
     capture_truncated: bool,
+}
+
+struct ConnectionObserver {
+    client_to_target: AtomicU64,
+    target_to_client: AtomicU64,
+    capture: Option<Arc<dyn TrafficObserver>>,
+}
+
+impl ConnectionObserver {
+    fn new(capture: Option<Arc<dyn TrafficObserver>>) -> Self {
+        Self {
+            client_to_target: AtomicU64::new(0),
+            target_to_client: AtomicU64::new(0),
+            capture,
+        }
+    }
+
+    fn stats(&self) -> ProxyStats {
+        ProxyStats {
+            client_to_target: self.client_to_target.load(Ordering::Relaxed),
+            target_to_client: self.target_to_client.load(Ordering::Relaxed),
+        }
+    }
+}
+
+impl TrafficObserver for ConnectionObserver {
+    fn observe(&self, direction: TrafficDirection, data: &[u8]) {
+        match direction {
+            TrafficDirection::ClientToTarget => {
+                self.client_to_target
+                    .fetch_add(data.len() as u64, Ordering::Relaxed);
+            }
+            TrafficDirection::TargetToClient => {
+                self.target_to_client
+                    .fetch_add(data.len() as u64, Ordering::Relaxed);
+            }
+        }
+        if let Some(capture) = &self.capture {
+            capture.observe(direction, data);
+        }
+    }
+}
+
+fn classify_proxy_error(error: &str, stats: ProxyStats) -> String {
+    if (stats.client_to_target > 0 || stats.target_to_client > 0)
+        && error.contains("Connection reset without closing handshake")
+    {
+        "completed_ungraceful_close".into()
+    } else {
+        format!("proxy_error:{error}")
+    }
 }
 
 #[derive(Clone, FromRef)]
@@ -393,22 +447,25 @@ async fn process_traffic(
             }
         }
 
-        let observer = capture
+        let capture_observer = capture
             .as_ref()
             .map(|session| session.observer.clone() as Arc<dyn TrafficObserver>);
+        let connection_observer = Arc::new(ConnectionObserver::new(capture_observer));
+        let observer = Some(connection_observer.clone() as Arc<dyn TrafficObserver>);
         match timeout(
             state.connection_timeout,
             proxy_observed(socket.into(), tcp, CancellationToken::new(), observer),
         )
         .await
         {
-            Ok(Ok(proxy_stats)) => stats = proxy_stats,
+            Ok(Ok(_)) => {}
             Ok(Err(err)) => {
                 debug!(target = %record.target, "tunnel closed: {err}");
-                result = format!("proxy_error:{err}");
+                result = classify_proxy_error(&err.to_string(), connection_observer.stats());
             }
             Err(_) => result = "connection_timeout".into(),
         }
+        stats = connection_observer.stats();
 
         let (captured_bytes, capture_truncated, capture_path) = match &capture {
             Some(session) => {
@@ -701,4 +758,37 @@ fn spawn_expiry_cleanup(state: GlobalState) {
             remove_expired(&state).await;
         }
     });
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn connection_observer_keeps_counts_for_failed_proxies() {
+        let observer = ConnectionObserver::new(None);
+        observer.observe(TrafficDirection::ClientToTarget, b"request");
+        observer.observe(TrafficDirection::TargetToClient, b"response");
+
+        assert_eq!(
+            observer.stats(),
+            ProxyStats {
+                client_to_target: 7,
+                target_to_client: 8,
+            }
+        );
+    }
+
+    #[test]
+    fn reset_after_transfer_is_not_reported_as_failed_traffic() {
+        let result = classify_proxy_error(
+            "WebSocket protocol error: Connection reset without closing handshake",
+            ProxyStats {
+                client_to_target: 7,
+                target_to_client: 8,
+            },
+        );
+
+        assert_eq!(result, "completed_ungraceful_close");
+    }
 }
