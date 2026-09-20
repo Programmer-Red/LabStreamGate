@@ -30,13 +30,23 @@ pub struct CaptureObserver {
 
 impl TrafficObserver for CaptureObserver {
     fn observe(&self, direction: TrafficDirection, data: &[u8]) {
-        let already = self.captured.load(Ordering::Relaxed);
-        if already >= self.max_bytes {
-            self.truncated.store(true, Ordering::Relaxed);
-            return;
-        }
-        let remaining = (self.max_bytes - already) as usize;
-        let length = remaining.min(data.len());
+        let mut already = self.captured.load(Ordering::Relaxed);
+        let length = loop {
+            if already >= self.max_bytes {
+                self.truncated.store(true, Ordering::Relaxed);
+                return;
+            }
+            let length = ((self.max_bytes - already) as usize).min(data.len());
+            match self.captured.compare_exchange_weak(
+                already,
+                already + length as u64,
+                Ordering::Relaxed,
+                Ordering::Relaxed,
+            ) {
+                Ok(_) => break length,
+                Err(current) => already = current,
+            }
+        };
         if length < data.len() {
             self.truncated.store(true, Ordering::Relaxed);
         }
@@ -46,8 +56,9 @@ impl TrafficObserver for CaptureObserver {
             .try_send(CaptureMessage::Packet(direction, packet, SystemTime::now()))
             .is_ok()
         {
-            self.captured.fetch_add(length as u64, Ordering::Relaxed);
+            // The byte reservation above is now committed.
         } else {
+            self.captured.fetch_sub(length as u64, Ordering::Relaxed);
             self.truncated.store(true, Ordering::Relaxed);
         }
     }
@@ -266,12 +277,14 @@ pub fn spawn_retention_cleanup(root: PathBuf, retention_days: u64, max_total_byt
         loop {
             interval.tick().await;
             let root = root.clone();
-            if let Err(err) = tokio::task::spawn_blocking(move || {
+            match tokio::task::spawn_blocking(move || {
                 cleanup_capture_files(&root, retention_days, max_total_bytes)
             })
             .await
             {
-                error!("capture retention worker failed: {err}");
+                Ok(Ok(())) => {}
+                Ok(Err(err)) => error!("capture retention cleanup failed: {err}"),
+                Err(err) => error!("capture retention worker failed: {err}"),
             }
         }
     });
