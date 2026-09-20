@@ -1,0 +1,8 @@
+.idea/
+target/
+dist/
+contribs/
+node_modules/
+*.rs.bk
+pnpm-lock.yaml
+result

@@ -1,0 +1,38 @@
+{
+  "name": "@tkkc-sec/labstreamgate",
+  "version": "0.5.6",
+  "description": "Browser controller client for LabStreamGate",
+  "license": "MIT",
+  "repository": "Programmer-Red/LabStreamGate",
+  "author": {
+    "name": "TKKC Sec",
+    "email": "admin@xujclab.com"
+  },
+  "type": "module",
+  "exports": {
+    "types": "./dist/index.d.ts",
+    "default": "./dist/index.js"
+  },
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "sideEffects": false,
+  "engines": {
+    "node": ">=18"
+  },
+  "scripts": {
+    "build": "tsc -p tsconfig.json"
+  },
+  "files": [
+    "dist",
+    "README.md",
+    "LICENSE"
+  ],
+  "dependencies": {
+    "ky": "^2.0.2",
+    "nanoid": "^5.1.11"
+  },
+  "devDependencies": {
+    "@types/node": "^25.6.0",
+    "typescript": "^6.0.3"
+  }
+}

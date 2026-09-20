@@ -1,0 +1,12 @@
+[Desktop Entry]
+Version=1.0
+Type=Application
+Name=LabStreamGate
+GenericName=LabStreamGate
+Comment=Controlled TCP-over-WebSocket forwarding tunnel.
+Exec=wsrx-desktop
+TryExec=wsrx-desktop
+Icon=wsrx-desktop
+Terminal=false
+Categories=Network;
+StartupWMClass=wsrx-desktop

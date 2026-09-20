@@ -1,0 +1,70 @@
+[package]
+authors.workspace      = true
+description            = "Controlled TCP-over-WebSocket forwarding tunnel."
+documentation          = "https://docs.rs/wsrx"
+edition.workspace      = true
+homepage.workspace     = true
+license.workspace      = true
+name                   = "wsrx-desktop"
+readme                 = "../../README.md"
+repository.workspace   = true
+rust-version.workspace = true
+version.workspace      = true
+
+[dependencies]
+wsrx = { path = "../wsrx" }
+
+woocraft      = { workspace = true, features = ["tray"] }
+
+async-channel = "2.5"
+rust-embed   = { version = "8.12", features = ["interpolate-folder-path", "include-exclude"] }
+directories   = { workspace = true }
+local-ip-address = { workspace = true }
+open          = { workspace = true }
+sys-locale    = { workspace = true }
+sysinfo       = { workspace = true }
+
+bitflags         = { workspace = true }
+once_cell        = { workspace = true }
+rand             = { workspace = true }
+rustls           = { workspace = true }
+tokio            = { workspace = true }
+toml             = { workspace = true }
+tracing          = { workspace = true }
+tracing-appender = { workspace = true }
+tracing-subscriber = { workspace = true }
+
+axum       = { workspace = true }
+chrono     = { workspace = true }
+reqwest    = { workspace = true }
+serde      = { workspace = true }
+serde_json = { workspace = true }
+thiserror  = { workspace = true }
+tokio-util = { workspace = true }
+tower-http = { workspace = true }
+
+[build-dependencies]
+build-target  = { workspace = true }
+git-version   = { workspace = true }
+rustc_version = { workspace = true }
+winres        = { workspace = true }
+
+[[bin]]
+name = "wsrx-desktop"
+path = "src/main.rs"
+
+[package.metadata.bundle]
+name = "LabStreamGate"
+
+category          = "Utilities"
+copyright         = "Copyright (c) 2023 XDSEC; modifications Copyright (c) TKKC Sec"
+deb_depends       = ["libc6", "libgcc-s1", "libssl-dev", "libstdc++6"]
+identifier        = "com.xujclab.streamgate"
+osx_url_schemes   = ["com.xujclab.streamgate"]
+short_description = "Controlled TCP-over-WebSocket forwarding tunnel."
+
+icon = [
+  "../../arts/logo.png",
+  "../../macos/WebSocketReflectorX.icns",
+  "../../windows/WebSocketReflectorX.ico",
+]
