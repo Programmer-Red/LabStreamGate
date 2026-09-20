@@ -1,7 +1,5 @@
 # LabStreamGate
 
-![LabStreamGate](arts/logo.png)
-
 LabStreamGate 是 xujclab 靶机的本地连接器。它会把题目页给出的 WSS 连接转成本机 TCP 地址，供浏览器、SSH、nc 和调试器使用。
 
 ## 下载
