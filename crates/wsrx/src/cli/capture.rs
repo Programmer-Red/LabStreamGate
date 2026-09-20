@@ -242,6 +242,7 @@ fn build_udp_packet(
     packet
 }
 
+#[allow(clippy::chunks_exact_to_as_chunks)]
 fn ipv4_checksum(header: &[u8]) -> u16 {
     let mut sum = 0_u32;
     for word in header.chunks_exact(2) {
@@ -333,14 +334,14 @@ fn collect_pcaps(
         let path = entry.path();
         if path.is_dir() {
             collect_pcaps(&path, files)?;
-        } else if path.extension().and_then(|value| value.to_str()) == Some("pcap") {
-            if let Ok(metadata) = entry.metadata() {
-                files.push((
-                    path,
-                    metadata.modified().unwrap_or(UNIX_EPOCH),
-                    metadata.len(),
-                ));
-            }
+        } else if path.extension().and_then(|value| value.to_str()) == Some("pcap")
+            && let Ok(metadata) = entry.metadata()
+        {
+            files.push((
+                path,
+                metadata.modified().unwrap_or(UNIX_EPOCH),
+                metadata.len(),
+            ));
         }
     }
     Ok(())

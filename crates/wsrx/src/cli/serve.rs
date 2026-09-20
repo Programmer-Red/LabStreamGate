@@ -42,6 +42,7 @@ const CONNECT_TIMEOUT: Duration = Duration::from_secs(5);
 const CLEANUP_INTERVAL: Duration = Duration::from_secs(30);
 
 /// Launch the platform tunnel gateway.
+#[allow(clippy::too_many_arguments)]
 pub async fn launch(
     host: Option<String>, port: Option<u16>, secret: Option<String>, state_file: Option<String>,
     allowed_target_hosts: Vec<String>, max_connections: usize, capture_root: Option<String>,
@@ -463,12 +464,12 @@ impl TunnelConnectionPermit {
 
 impl Drop for TunnelConnectionPermit {
     fn drop(&mut self) {
-        if let Ok(mut counts) = self.counts.lock() {
-            if let Some(count) = counts.get_mut(&self.key) {
-                *count = count.saturating_sub(1);
-                if *count == 0 {
-                    counts.remove(&self.key);
-                }
+        if let Ok(mut counts) = self.counts.lock()
+            && let Some(count) = counts.get_mut(&self.key)
+        {
+            *count = count.saturating_sub(1);
+            if *count == 0 {
+                counts.remove(&self.key);
             }
         }
     }
