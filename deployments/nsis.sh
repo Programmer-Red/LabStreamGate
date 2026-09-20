@@ -24,5 +24,7 @@ echo '---- Compressing package'
 echo '---- Creating installer'
 mv $APP_NAME windows/$APP_NAME
 cp windows/$APP_NAME.ico windows/$APP_NAME/$APP_NAME.ico
-makensis windows/setup.nsi
-mv windows/*.exe $APP_NAME-installer-windows-msvc-x86_64.exe
+pushd windows >/dev/null
+makensis setup.nsi
+popd >/dev/null
+mv windows/labstreamgate-desktop-installer-windows-msvc-x86_64.exe $APP_NAME-installer-windows-msvc-x86_64.exe
