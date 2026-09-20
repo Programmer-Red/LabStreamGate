@@ -6,7 +6,7 @@ Unicode True
 !include "LogicLib.nsh"
 
 !define APPNAME                      "LabStreamGate"
-!define EXECNAME                     "wsrx-desktop"
+!define EXECNAME                     "labstreamgate-desktop"
 !define COMPANYNAME                  "TKKC Sec"
 !define DESCRIPTION                  "Controlled TCP-over-WebSocket forwarding tunnel."
 !define VERSIONMAJOR                 0
@@ -18,7 +18,7 @@ Unicode True
 !define MUI_FINISHPAGE_RUN_TEXT      "Run ${APPNAME}"
 !define MUI_FINISHPAGE_RUN_FUNCTION  "RunApplication"
 !define MUI_FINISHPAGE_LINK          "Visit project website"
-!define MUI_FINISHPAGE_LINK_LOCATION "https://emeric.io/${APPNAME}/"
+!define MUI_FINISHPAGE_LINK_LOCATION "https://github.com/Programmer-Red/LabStreamGate"
 !define MUI_WELCOMEPAGE_TITLE        "Welcome to the ${APPNAME} installer!"
 !define MUI_ICON                     "${APPNAME}.ico"
 !define MUI_WELCOMEFINISHPAGE_BITMAP "nsis-banner.bmp"
@@ -69,8 +69,8 @@ Section "${APPNAME} (required)" SecDummy
   WriteRegStr   HKLM "Software\Microsoft\Windows\CurrentVersion\Uninstall\${COMPANYNAME} ${APPNAME}" "UninstallString"  "$INSTDIR\uninstall.exe"
   WriteRegStr   HKLM "Software\Microsoft\Windows\CurrentVersion\Uninstall\${COMPANYNAME} ${APPNAME}" "InstallLocation"  "$INSTDIR"
   WriteRegStr   HKLM "Software\Microsoft\Windows\CurrentVersion\Uninstall\${COMPANYNAME} ${APPNAME}" "Publisher"        "${COMPANYNAME}"
-  WriteRegStr   HKLM "Software\Microsoft\Windows\CurrentVersion\Uninstall\${COMPANYNAME} ${APPNAME}" "DisplayIcon"      "$INSTDIR\icon.ico"
-  WriteRegStr   HKLM "Software\Microsoft\Windows\CurrentVersion\Uninstall\${COMPANYNAME} ${APPNAME}" "DisplayVersion"   ${VERSIONMAJOR}.${VERSIONMINOR}${VERSIONBUILD}
+  WriteRegStr   HKLM "Software\Microsoft\Windows\CurrentVersion\Uninstall\${COMPANYNAME} ${APPNAME}" "DisplayIcon"      "$INSTDIR\${APPNAME}.ico"
+  WriteRegStr   HKLM "Software\Microsoft\Windows\CurrentVersion\Uninstall\${COMPANYNAME} ${APPNAME}" "DisplayVersion"   ${VERSIONMAJOR}.${VERSIONMINOR}.${VERSIONBUILD}
   WriteRegDWORD HKLM "Software\Microsoft\Windows\CurrentVersion\Uninstall\${COMPANYNAME} ${APPNAME}" "VersionMajor"     ${VERSIONMAJOR}
   WriteRegDWORD HKLM "Software\Microsoft\Windows\CurrentVersion\Uninstall\${COMPANYNAME} ${APPNAME}" "VersionMinor"     ${VERSIONMINOR}
   WriteRegDWORD HKLM "Software\Microsoft\Windows\CurrentVersion\Uninstall\${COMPANYNAME} ${APPNAME}" "NoModify"         1
@@ -101,7 +101,7 @@ FunctionEnd
 
 Section "Uninstall"
   RMDir /r "$INSTDIR"
-  RMDir /r "$SMPROGRAMS\${APPNAME}.lnk"
+  Delete "$SMPROGRAMS\${APPNAME}.lnk"
   DeleteRegKey HKCU "Software\${COMPANYNAME}\${APPNAME}"
   DeleteRegKey HKLM "Software\Microsoft\Windows\CurrentVersion\Uninstall\${COMPANYNAME} ${APPNAME}"
 SectionEnd

@@ -10,10 +10,10 @@ end
 
 mkdir -p dist
 set APP_ROOT dist
-install -D ./target/release/wsrx $APP_ROOT/usr/bin/wsrx
-install -D ./target/release/wsrx-desktop $APP_ROOT/usr/bin/wsrx-desktop
-install -Dm644 ./freedesktop/wsrx-desktop.desktop $APP_ROOT/usr/share/applications/wsrx-desktop.desktop
-install -Dm644 ./freedesktop/wsrx-desktop.svg $APP_ROOT/usr/share/icons/hicolor/scalable/apps/wsrx-desktop.svg
+install -D ./target/release/labstreamgate $APP_ROOT/usr/bin/labstreamgate
+install -D ./target/release/labstreamgate-desktop $APP_ROOT/usr/bin/labstreamgate-desktop
+install -Dm644 ./freedesktop/wsrx-desktop.desktop $APP_ROOT/usr/share/applications/labstreamgate.desktop
+install -Dm644 ./freedesktop/wsrx-desktop.svg $APP_ROOT/usr/share/icons/hicolor/scalable/apps/labstreamgate.svg
 
 set USRDIR /usr
 export NO_STRIP=true

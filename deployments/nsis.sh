@@ -12,8 +12,9 @@ fi
 echo '---- Running make install'
 mkdir -p dist
 APP_ROOT=dist
-cp ./target/release/wsrx.exe "${APP_ROOT}/wsrx.exe"
-cp ./target/release/wsrx-desktop.exe "${APP_ROOT}/wsrx-desktop.exe"
+cp ./target/release/labstreamgate.exe "${APP_ROOT}/labstreamgate.exe"
+cp ./target/release/labstreamgate-desktop.exe "${APP_ROOT}/labstreamgate-desktop.exe"
+curl -fsSL https://aka.ms/vs/17/release/vc_redist.x64.exe -o "${APP_ROOT}/vc_redist.x64.exe"
 
 mv $APP_ROOT $APP_NAME
 

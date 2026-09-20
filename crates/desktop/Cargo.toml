@@ -50,7 +50,7 @@ rustc_version = { workspace = true }
 winres        = { workspace = true }
 
 [[bin]]
-name = "wsrx-desktop"
+name = "labstreamgate-desktop"
 path = "src/main.rs"
 
 [package.metadata.bundle]

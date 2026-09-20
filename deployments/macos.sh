@@ -4,7 +4,7 @@ set -ex
 
 APP="target/release/bundle/osx/LabStreamGate.app"
 APP_NAME="LabStreamGate"
-BIN="$APP/Contents/MacOS/wsrx-desktop"
+BIN="$APP/Contents/MacOS/labstreamgate-desktop"
 ZIP="./LabStreamGate.app.zip"
 
 cd crates/desktop && cargo bundle --release

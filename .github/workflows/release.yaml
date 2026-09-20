@@ -1,0 +1,114 @@
+name: LabStreamGate Release
+
+on:
+  push:
+    tags:
+      - "v*"
+
+permissions:
+  contents: write
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  linux:
+    name: Linux packages
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: x86_64-unknown-linux-musl
+      - name: Install packaging dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y appstream fish fuse libfuse-dev libgl1-mesa-dev libtool libwayland-dev libx11-xcb-dev libxcb-cursor0 libxcb1-dev libxkbcommon-x11-dev libzstd-dev musl-tools ninja-build pkgconf
+      - name: Build desktop and CLI
+        run: |
+          cargo build --locked --release --bins
+          cargo build --locked --release -p wsrx --bin labstreamgate --target x86_64-unknown-linux-musl
+      - name: Package CLI
+        run: |
+          tar -C target/release -czf "labstreamgate-cli-${GITHUB_REF_NAME}-linux-gnu-x86_64.tar.gz" labstreamgate
+          tar -C target/x86_64-unknown-linux-musl/release -czf "labstreamgate-cli-${GITHUB_REF_NAME}-linux-musl-x86_64.tar.gz" labstreamgate
+      - name: Package desktop AppImage
+        run: |
+          fish deployments/appimage.fish
+          appimage="$(find . -maxdepth 1 -type f -name '*.AppImage' -print -quit)"
+          test -n "$appimage"
+          mv "$appimage" "LabStreamGate-${GITHUB_REF_NAME}-linux-x86_64.AppImage"
+      - uses: softprops/action-gh-release@v3
+        with:
+          generate_release_notes: true
+          files: |
+            labstreamgate-cli-${{ github.ref_name }}-linux-gnu-x86_64.tar.gz
+            labstreamgate-cli-${{ github.ref_name }}-linux-musl-x86_64.tar.gz
+            LabStreamGate-${{ github.ref_name }}-linux-x86_64.AppImage
+
+  windows:
+    name: Windows packages
+    runs-on: windows-2022
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: ilammy/setup-nasm@v1
+      - uses: seanmiddleditch/gha-setup-ninja@v6
+      - name: Build desktop and CLI
+        run: cargo build --locked --release --bins
+      - name: Package CLI
+        shell: pwsh
+        run: 7z a "labstreamgate-cli-${env:GITHUB_REF_NAME}-windows-x86_64.zip" target/release/labstreamgate.exe
+      - name: Package desktop
+        shell: bash
+        run: deployments/nsis.sh
+      - name: Name desktop packages
+        shell: bash
+        run: |
+          mv LabStreamGate-installer-windows-msvc-x86_64.exe "LabStreamGate-${GITHUB_REF_NAME}-installer-windows-x86_64.exe"
+          mv LabStreamGate-portable-windows-msvc-x86_64.zip "LabStreamGate-${GITHUB_REF_NAME}-portable-windows-x86_64.zip"
+      - uses: softprops/action-gh-release@v3
+        with:
+          generate_release_notes: true
+          files: |
+            labstreamgate-cli-${{ github.ref_name }}-windows-x86_64.zip
+            LabStreamGate-${{ github.ref_name }}-installer-windows-x86_64.exe
+            LabStreamGate-${{ github.ref_name }}-portable-windows-x86_64.zip
+
+  macos:
+    name: macOS packages
+    runs-on: macos-14
+    strategy:
+      matrix:
+        target:
+          - x86_64-apple-darwin
+          - aarch64-apple-darwin
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: ${{ matrix.target }}
+      - name: Install bundle tool
+        run: cargo install cargo-bundle --locked
+      - name: Build desktop and CLI
+        run: cargo build --locked --release --bins --target "${{ matrix.target }}"
+      - name: Bundle desktop
+        run: |
+          cd crates/desktop
+          cargo bundle --release --target "${{ matrix.target }}"
+      - name: Package
+        run: |
+          arch="${{ matrix.target }}"
+          arch="${arch%%-*}"
+          app="target/${{ matrix.target }}/release/bundle/osx/LabStreamGate.app"
+          test -d "$app"
+          ditto -c -k --sequesterRsrc --keepParent "$app" "LabStreamGate-${GITHUB_REF_NAME}-macos-${arch}.app.zip"
+          hdiutil create "LabStreamGate-${GITHUB_REF_NAME}-macos-${arch}.dmg" -ov -volname LabStreamGate -fs HFS+ -srcfolder "$app"
+          ditto -c -k --keepParent "target/${{ matrix.target }}/release/labstreamgate" "labstreamgate-cli-${GITHUB_REF_NAME}-macos-${arch}.zip"
+      - uses: softprops/action-gh-release@v3
+        with:
+          generate_release_notes: true
+          files: |
+            LabStreamGate-${{ github.ref_name }}-macos-*.app.zip
+            LabStreamGate-${{ github.ref_name }}-macos-*.dmg
+            labstreamgate-cli-${{ github.ref_name }}-macos-*.zip
