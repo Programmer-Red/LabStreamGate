@@ -9,7 +9,7 @@ homepage     = "https://github.com/Programmer-Red/LabStreamGate"
 license      = "MIT"
 repository   = "https://github.com/Programmer-Red/LabStreamGate"
 rust-version = "1.95"
-version      = "0.6.3"
+version      = "0.6.4"
 
 [profile.release]
 codegen-units = 1

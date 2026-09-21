@@ -20,6 +20,16 @@ LabStreamGate 是 xujclab 靶机的本地连接器。它会把题目页给出的
 3. 点击「使用 LabStreamGate 连接」，首次使用时在客户端中允许 xujclab。
 4. 按题目页显示的本机地址连接，例如 `127.0.0.1:32123`。
 
+### 使用 CLI
+
+CLI 不需要 `sudo`。将题目页提供的完整 WSS 地址粘贴到命令末尾：
+
+```bash
+./labstreamgate connect 'wss://chall.xujclab.com/你的通道ID'
+```
+
+启动后终端会显示一个本地连接地址，例如 `127.0.0.1:54813`。保持 CLI 运行，再让浏览器、nc、SSH 或调试器连接这个本地地址。CLI 会一直等待本地连接，这是正常状态；按 `Ctrl+C` 退出。
+
 macOS 如果提示应用无法打开，先将应用拖入「应用程序」，再执行：
 
 ```bash
