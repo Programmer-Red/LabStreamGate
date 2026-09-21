@@ -17,7 +17,7 @@ use tokio::net::TcpStream;
 #[cfg(feature = "client")]
 use tokio_tungstenite::{
     MaybeTlsStream, WebSocketStream,
-    tungstenite::{Error as TgError, Message as TgMessage},
+    tungstenite::{Error as TgError, Message as TgMessage, error::ProtocolError},
 };
 use tokio_util::{
     bytes::{BufMut, Bytes, BytesMut},
@@ -39,6 +39,24 @@ pub enum Error {
     #[cfg(feature = "server")]
     #[error("Axum error: {0}")]
     Axum(#[from] axum::Error),
+}
+
+impl Error {
+    /// A TCP tunnel may finish after all payload has been delivered without the
+    /// remote peer sending a WebSocket close frame. Treat that transport-level
+    /// shutdown as a normal tunnel EOF on clients.
+    pub fn is_remote_close_without_handshake(&self) -> bool {
+        #[cfg(feature = "client")]
+        if matches!(
+            self,
+            Self::WebSocket(TgError::Protocol(
+                ProtocolError::ResetWithoutClosingHandshake
+            ))
+        ) {
+            return true;
+        }
+        false
+    }
 }
 
 /// A enum for different type of WebSocket message.
@@ -239,7 +257,11 @@ impl Sink<Message> for WrappedWsStream {
 pub async fn proxy(
     ws: WrappedWsStream, tcp: TcpStream, token: CancellationToken,
 ) -> Result<(), Error> {
-    proxy_observed(ws, tcp, token, None).await.map(|_| ())
+    match proxy_observed(ws, tcp, token, None).await {
+        Ok(_) => Ok(()),
+        Err(err) if err.is_remote_close_without_handshake() => Ok(()),
+        Err(err) => Err(err),
+    }
 }
 
 pub async fn proxy_observed(
@@ -363,5 +385,26 @@ impl Encoder<Message> for MessageCodec {
             }
             Message::Others => Ok(()),
         }
+    }
+}
+
+#[cfg(all(test, feature = "client"))]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn recognizes_remote_close_without_websocket_handshake() {
+        let error = Error::WebSocket(TgError::Protocol(
+            ProtocolError::ResetWithoutClosingHandshake,
+        ));
+
+        assert!(error.is_remote_close_without_handshake());
+    }
+
+    #[test]
+    fn does_not_hide_other_websocket_protocol_errors() {
+        let error = Error::WebSocket(TgError::Protocol(ProtocolError::SendAfterClosing));
+
+        assert!(!error.is_remote_close_without_handshake());
     }
 }
