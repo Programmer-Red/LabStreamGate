@@ -47,15 +47,18 @@ impl Error {
     /// shutdown as a normal tunnel EOF on clients.
     pub fn is_remote_close_without_handshake(&self) -> bool {
         #[cfg(feature = "client")]
-        if matches!(
-            self,
-            Self::WebSocket(TgError::Protocol(
-                ProtocolError::ResetWithoutClosingHandshake
-            ))
-        ) {
-            return true;
+        {
+            matches!(
+                self,
+                Self::WebSocket(TgError::Protocol(
+                    ProtocolError::ResetWithoutClosingHandshake
+                ))
+            )
         }
-        false
+        #[cfg(not(feature = "client"))]
+        {
+            false
+        }
     }
 }
 
