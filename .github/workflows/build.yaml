@@ -35,8 +35,8 @@ jobs:
       - name: Check gateway
         run: cargo check --locked -p wsrx --bin labstreamgate
 
-      - name: Test transport library
-        run: cargo test --locked -p wsrx --lib
+      - name: Test transport library and gateway
+        run: cargo test --locked -p wsrx --lib --bin labstreamgate
 
       - name: Lint gateway
         run: cargo clippy --locked -p wsrx --bin labstreamgate -- -D warnings

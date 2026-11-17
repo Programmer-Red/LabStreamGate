@@ -194,7 +194,7 @@ fn safe_segment(value: &str) -> String {
 
 async fn write_global_header(file: &mut File) -> std::io::Result<()> {
     let mut header = Vec::with_capacity(24);
-    header.extend_from_slice(&0xa1b2c3d4_u32.to_le_bytes());
+    header.extend_from_slice(&0xA1B2C3D4_u32.to_le_bytes());
     header.extend_from_slice(&2_u16.to_le_bytes());
     header.extend_from_slice(&4_u16.to_le_bytes());
     header.extend_from_slice(&0_i32.to_le_bytes());
@@ -249,7 +249,7 @@ fn ipv4_checksum(header: &[u8]) -> u16 {
         sum += u16::from_be_bytes([word[0], word[1]]) as u32;
     }
     while sum >> 16 != 0 {
-        sum = (sum & 0xffff) + (sum >> 16);
+        sum = (sum & 0xFFFF) + (sum >> 16);
     }
     !(sum as u16)
 }

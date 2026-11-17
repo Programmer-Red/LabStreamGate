@@ -112,7 +112,8 @@ pub async fn launch(
     .expect("failed to launch server");
 }
 
-type ConnectionMap = Arc<RwLock<HashMap<String, TunnelRecord>>>;
+type TunnelRegistry = HashMap<String, TunnelRecord>;
+type RegistryError = (StatusCode, String);
 
 #[derive(Clone, Debug, Deserialize, Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -212,7 +213,7 @@ fn classify_proxy_error(error: &str, stats: ProxyStats) -> String {
 #[derive(Clone, FromRef)]
 pub struct GlobalState {
     pub secret: String,
-    connections: ConnectionMap,
+    connections: Arc<RwLock<TunnelRegistry>>,
     state_file: Option<PathBuf>,
     allowed_target_hosts: Arc<HashSet<String>>,
     connection_slots: Arc<Semaphore>,
@@ -322,19 +323,28 @@ async fn launch_tunnel(
         competition_id: req.competition_id,
         capture: req.capture,
     };
-    state
-        .connections
-        .write()
-        .await
-        .insert(req.key.clone(), record.clone());
-    persist_registry(&state).await?;
+    let saved = record.clone();
+    update_registry(&state, move |registry| {
+        registry.insert(req.key, saved);
+        Ok(((), true))
+    })
+    .await?;
 
     Ok((StatusCode::CREATED, Json(record)))
 }
 
 async fn get_tunnels(State(state): State<GlobalState>) -> impl IntoResponse {
     remove_expired(&state).await;
-    Json(state.connections.read().await.clone())
+    let now = unix_timestamp();
+    let active: TunnelRegistry = state
+        .connections
+        .read()
+        .await
+        .iter()
+        .filter(|(_, record)| !record.is_expired(now))
+        .map(|(key, record)| (key.clone(), record.clone()))
+        .collect();
+    Json(active)
 }
 
 #[derive(Deserialize)]
@@ -346,10 +356,13 @@ struct CloseTunnelRequest {
 async fn close_tunnel(
     State(state): State<GlobalState>, Json(req): Json<CloseTunnelRequest>,
 ) -> Result<StatusCode, (StatusCode, String)> {
-    if state.connections.write().await.remove(&req.key).is_none() {
-        return Err((StatusCode::NOT_FOUND, "tunnel not found".into()));
-    }
-    persist_registry(&state).await?;
+    update_registry(&state, move |registry| {
+        if registry.remove(&req.key).is_none() {
+            return Err((StatusCode::NOT_FOUND, "tunnel not found".into()));
+        }
+        Ok(((), true))
+    })
+    .await?;
     Ok(StatusCode::NO_CONTENT)
 }
 
@@ -585,10 +598,13 @@ async fn ping(State(state): State<GlobalState>, AxumPath(key): AxumPath<String>)
 }
 
 async fn health(State(state): State<GlobalState>) -> impl IntoResponse {
+    let now = unix_timestamp();
     Json(serde_json::json!({
         "status": "ok",
         "service": "labstreamgate",
-        "activeTunnels": state.connections.read().await.len(),
+        "activeTunnels": state.connections.read().await.values()
+            .filter(|record| !record.is_expired(now))
+            .count(),
         "availableConnections": state.connection_slots.available_permits(),
         "activeTunnelConnections": state.per_tunnel_connections.lock()
             .map(|counts| counts.values().sum::<usize>())
@@ -600,17 +616,29 @@ async fn active_record(
     state: &GlobalState, key: &str,
 ) -> Result<TunnelRecord, (StatusCode, String)> {
     let record = state.connections.read().await.get(key).cloned();
-    match record {
-        Some(record) if !record.is_expired(unix_timestamp()) => Ok(record),
-        Some(_) => {
-            state.connections.write().await.remove(key);
-            if let Err(err) = persist_registry(state).await {
-                error!("failed to persist expired tunnel removal: {}", err.1);
-            }
-            Err((StatusCode::GONE, "tunnel expired".into()))
-        }
-        None => Err((StatusCode::NOT_FOUND, "tunnel not found".into())),
+    let Some(record) = record else {
+        return Err((StatusCode::NOT_FOUND, "tunnel not found".into()));
+    };
+    if !record.is_expired(unix_timestamp()) {
+        return Ok(record);
     }
+
+    let key = key.to_owned();
+    match update_registry(state, move |registry| match registry.get(&key) {
+        Some(record) if !record.is_expired(unix_timestamp()) => Ok((Some(record.clone()), false)),
+        Some(_) => {
+            registry.remove(&key);
+            Ok((None, true))
+        }
+        None => Ok((None, false)),
+    })
+    .await
+    {
+        Ok(Some(renewed)) => return Ok(renewed),
+        Ok(None) => (),
+        Err(err) => error!("failed to persist expired tunnel removal: {}", err.1),
+    }
+    Err((StatusCode::GONE, "tunnel expired".into()))
 }
 
 fn validate_key(key: &str) -> Result<(), (StatusCode, String)> {
@@ -678,12 +706,12 @@ fn unix_timestamp_millis() -> u128 {
         .as_millis()
 }
 
-async fn load_registry(path: Option<&Path>) -> HashMap<String, TunnelRecord> {
+async fn load_registry(path: Option<&Path>) -> TunnelRegistry {
     let Some(path) = path else {
         return HashMap::new();
     };
     match tokio::fs::read(path).await {
-        Ok(data) => match serde_json::from_slice::<HashMap<String, TunnelRecord>>(&data) {
+        Ok(data) => match serde_json::from_slice::<TunnelRegistry>(&data) {
             Ok(mut registry) => {
                 let now = unix_timestamp();
                 registry.retain(|_, record| !record.is_expired(now));
@@ -703,31 +731,48 @@ async fn load_registry(path: Option<&Path>) -> HashMap<String, TunnelRecord> {
     }
 }
 
-async fn persist_registry(state: &GlobalState) -> Result<(), (StatusCode, String)> {
-    let Some(path) = &state.state_file else {
-        return Ok(());
+async fn update_registry<T: Send + 'static>(
+    state: &GlobalState,
+    update: impl FnOnce(&mut TunnelRegistry) -> Result<(T, bool), RegistryError> + Send + 'static,
+) -> Result<T, RegistryError> {
+    let mut registry = state.connections.clone().write_owned().await;
+    let Some(path) = state.state_file.clone() else {
+        return update(&mut registry).map(|(result, _)| result);
     };
+
+    // Keep both publications in the same task so a disconnected caller cannot split the commit.
+    tokio::task::spawn_blocking(move || {
+        let mut next = registry.clone();
+        let (result, changed) = update(&mut next)?;
+        if changed {
+            persist_registry(&path, &next)?;
+            *registry = next;
+        }
+        Ok(result)
+    })
+    .await
+    .map_err(|err| {
+        (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            format!("failed to update tunnel registry: {err}"),
+        )
+    })?
+}
+
+fn persist_registry(path: &Path, registry: &TunnelRegistry) -> Result<(), RegistryError> {
     if let Some(parent) = path.parent() {
-        tokio::fs::create_dir_all(parent)
-            .await
-            .map_err(internal_io_error)?;
+        std::fs::create_dir_all(parent).map_err(internal_io_error)?;
     }
-    let data = {
-        let registry = state.connections.read().await;
-        serde_json::to_vec(&*registry).map_err(|err| {
-            (
-                StatusCode::INTERNAL_SERVER_ERROR,
-                format!("failed to serialize tunnel registry: {err}"),
-            )
-        })?
-    };
-    let temporary = path.with_extension("tmp");
-    tokio::fs::write(&temporary, data)
-        .await
-        .map_err(internal_io_error)?;
-    tokio::fs::rename(&temporary, path)
-        .await
-        .map_err(internal_io_error)
+    let data = serde_json::to_vec(registry).map_err(|err| {
+        (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            format!("failed to serialize tunnel registry: {err}"),
+        )
+    })?;
+    let mut temporary = path.as_os_str().to_os_string();
+    temporary.push(".tmp");
+    std::fs::write(&temporary, data).map_err(internal_io_error)?;
+    std::fs::rename(&temporary, path).map_err(internal_io_error)
 }
 
 fn internal_io_error(err: std::io::Error) -> (StatusCode, String) {
@@ -738,14 +783,14 @@ fn internal_io_error(err: std::io::Error) -> (StatusCode, String) {
 }
 
 async fn remove_expired(state: &GlobalState) {
-    let now = unix_timestamp();
-    let removed = {
-        let mut registry = state.connections.write().await;
+    if let Err(err) = update_registry(state, |registry| {
+        let now = unix_timestamp();
         let before = registry.len();
         registry.retain(|_, record| !record.is_expired(now));
-        registry.len() != before
-    };
-    if removed && let Err(err) = persist_registry(state).await {
+        Ok(((), registry.len() != before))
+    })
+    .await
+    {
         error!("failed to persist tunnel cleanup: {}", err.1);
     }
 }
@@ -763,6 +808,121 @@ fn spawn_expiry_cleanup(state: GlobalState) {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn test_state(state_file: PathBuf) -> GlobalState {
+        GlobalState {
+            secret: String::new(),
+            connections: Arc::new(RwLock::new(TunnelRegistry::new())),
+            capture_root: state_file.parent().unwrap().to_path_buf(),
+            state_file: Some(state_file),
+            allowed_target_hosts: Arc::new(parse_allowed_hosts(vec!["127.0.0.1".into()])),
+            connection_slots: Arc::new(Semaphore::new(1)),
+            max_capture_bytes: 0,
+            per_tunnel_connections: Arc::new(StdMutex::new(HashMap::new())),
+            max_connections_per_tunnel: 1,
+            connection_timeout: Duration::from_secs(1),
+            audit_lock: Arc::new(tokio::sync::Mutex::new(())),
+        }
+    }
+
+    fn tunnel_request(key: &str, expires_at: u64) -> TunnelRequest {
+        TunnelRequest {
+            key: key.into(),
+            target: "127.0.0.1:8080".into(),
+            expires_at: Some(expires_at),
+            instance_id: String::new(),
+            challenge_id: String::new(),
+            user_id: String::new(),
+            competition_id: None,
+            capture: false,
+        }
+    }
+
+    #[tokio::test]
+    async fn concurrent_tunnel_changes_survive_restart() {
+        let dir = std::env::temp_dir().join(format!("labstreamgate-{}", random_connection_id()));
+        let path = dir.join("registry.tmp");
+        let state = test_state(path.clone());
+        let expires_at = unix_timestamp() + 600;
+        let mut tasks = tokio::task::JoinSet::new();
+        for index in 0..12 {
+            let state = state.clone();
+            tasks.spawn(async move {
+                launch_tunnel(
+                    State(state),
+                    Json(tunnel_request(
+                        &format!("test-tunnel-{index:04}"),
+                        expires_at,
+                    )),
+                )
+                .await
+                .unwrap();
+            });
+        }
+        while let Some(result) = tasks.join_next().await {
+            result.unwrap();
+        }
+        assert_eq!(load_registry(Some(&path)).await.len(), 12);
+
+        let renewed = expires_at + 600;
+        let (renew_result, close_result) = tokio::join!(
+            launch_tunnel(
+                State(state.clone()),
+                Json(tunnel_request("test-tunnel-0000", renewed))
+            ),
+            close_tunnel(
+                State(state.clone()),
+                Json(CloseTunnelRequest {
+                    key: "test-tunnel-0001".into()
+                })
+            ),
+        );
+        renew_result.unwrap();
+        assert_eq!(close_result.unwrap(), StatusCode::NO_CONTENT);
+
+        let restored = load_registry(Some(&path)).await;
+        assert_eq!(restored.len(), 11);
+        assert_eq!(restored["test-tunnel-0000"].expires_at, Some(renewed));
+        assert!(!restored.contains_key("test-tunnel-0001"));
+        tokio::fs::remove_dir_all(dir).await.unwrap();
+    }
+
+    #[tokio::test]
+    async fn failed_persistence_keeps_existing_tunnel() {
+        let dir = std::env::temp_dir().join(format!("labstreamgate-{}", random_connection_id()));
+        let path = dir.join("registry.json");
+        let state = test_state(path.clone());
+        let key = "test-tunnel-0000";
+        let expires_at = unix_timestamp() + 600;
+        launch_tunnel(State(state.clone()), Json(tunnel_request(key, expires_at)))
+            .await
+            .unwrap();
+
+        tokio::fs::create_dir(dir.join("registry.json.tmp"))
+            .await
+            .unwrap();
+        let renew = launch_tunnel(
+            State(state.clone()),
+            Json(tunnel_request(key, expires_at + 600)),
+        )
+        .await;
+        let close = close_tunnel(
+            State(state.clone()),
+            Json(CloseTunnelRequest { key: key.into() }),
+        )
+        .await;
+        assert_eq!(renew.err().unwrap().0, StatusCode::INTERNAL_SERVER_ERROR);
+        assert_eq!(close.unwrap_err().0, StatusCode::INTERNAL_SERVER_ERROR);
+        assert_eq!(
+            active_record(&state, key).await.unwrap().expires_at,
+            Some(expires_at)
+        );
+        assert_eq!(
+            load_registry(Some(&path)).await[key].expires_at,
+            Some(expires_at)
+        );
+        tokio::fs::remove_dir_all(dir).await.unwrap();
+    }
 
     #[test]
     fn connection_observer_keeps_counts_for_failed_proxies() {
