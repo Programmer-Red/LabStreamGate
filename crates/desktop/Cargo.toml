@@ -21,6 +21,7 @@ rust-embed   = { version = "8.12", features = ["interpolate-folder-path", "inclu
 directories   = { workspace = true }
 local-ip-address = { workspace = true }
 open          = { workspace = true }
+semver        = { workspace = true }
 sys-locale    = { workspace = true }
 sysinfo       = { workspace = true }
 

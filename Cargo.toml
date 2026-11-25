@@ -9,7 +9,7 @@ homepage     = "https://github.com/Programmer-Red/LabStreamGate"
 license      = "MIT"
 repository   = "https://github.com/Programmer-Red/LabStreamGate"
 rust-version = "1.95"
-version      = "0.6.7"
+version      = "0.6.8"
 
 [profile.release]
 codegen-units = 1
@@ -50,6 +50,7 @@ subtle             = { version = "2.6" }
 # GUI
 async-compat = { version = "0.2" }
 open         = "5.4"
+semver       = "1.0"
 
 # GPUI / Woocraft
 # gpui / gpui_platform 请统一使用 woocraft 的 re-export（woocraft::gpui / woocraft::gpui_platform），

@@ -176,6 +176,12 @@ pub async fn stream_logs(state: ServerState) {
     }
 }
 
+fn is_newer_release(tag: &str, current: &str) -> Result<bool, semver::Error> {
+    let latest = semver::Version::parse(tag.strip_prefix('v').unwrap_or(tag))?;
+    let current = semver::Version::parse(current)?;
+    Ok(latest.cmp_precedence(&current).is_gt())
+}
+
 /// Checks the GitHub releases API for a newer version and notifies the UI.
 pub async fn check_for_updates(state: ServerState) {
     debug!("Checking for updates...");
@@ -203,9 +209,15 @@ pub async fn check_for_updates(state: ServerState) {
                 return;
             }
         };
-        let version = json["tag_name"].as_str().unwrap_or("0.0.0");
-        let current_version = env!("CARGO_PKG_VERSION");
-        if version != current_version {
+        let version = json["tag_name"].as_str().unwrap_or_default();
+        let has_updates = match is_newer_release(version, env!("CARGO_PKG_VERSION")) {
+            Ok(has_updates) => has_updates,
+            Err(e) => {
+                error!("Failed to compare release version {version:?}: {e}");
+                return;
+            }
+        };
+        if has_updates {
             state.events.send(UiEvent::HasUpdates(true)).await.ok();
             warn!("Update available: {}", version);
         } else {
@@ -231,4 +243,39 @@ pub fn system_info() -> String {
         sysinfo::System::kernel_long_version(),
         crate::WSRX_FULL_VERSION,
     )
+}
+
+#[cfg(test)]
+mod tests {
+    use super::is_newer_release;
+
+    #[test]
+    fn update_detection_only_accepts_newer_versions() {
+        for (latest, current, expected) in [
+            ("v0.6.7", "0.6.7", false),
+            ("0.6.7", "0.6.7", false),
+            ("v0.6.6", "0.6.7", false),
+            ("v0.6.8", "0.6.7", true),
+            ("v0.6.10", "0.6.9", true),
+            ("v0.6.9", "0.6.10", false),
+            ("v0.7.0", "0.6.10", true),
+            ("v0.6.8", "0.6.8-rc.1", true),
+            ("v0.6.8-rc.1", "0.6.8", false),
+            ("v0.6.8-rc.10", "0.6.8-rc.9", true),
+            ("v0.6.7+release", "0.6.7+local", false),
+        ] {
+            assert_eq!(
+                is_newer_release(latest, current).unwrap(),
+                expected,
+                "latest={latest}, current={current}",
+            );
+        }
+    }
+
+    #[test]
+    fn update_detection_rejects_invalid_release_tags() {
+        for latest in ["", "latest", "v0.6", "v0.06.8", "v0.6.8broken"] {
+            assert!(is_newer_release(latest, "0.6.7").is_err(), "tag={latest:?}");
+        }
+    }
 }

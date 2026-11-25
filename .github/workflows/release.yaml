@@ -57,6 +57,8 @@ jobs:
             echo "::error title=Linux desktop build failed::${build_detail}"
             exit "$build_code"
           fi
+      - name: Test desktop update detection
+        run: cargo test --locked --release -p wsrx-desktop --lib update_detection
       - name: Package desktop AppImage
         run: |
           fish deployments/appimage.fish
