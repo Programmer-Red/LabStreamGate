@@ -3603,6 +3603,68 @@ dependencies = [
 ]
 
 [[package]]
+name = "labstreamgate"
+version = "0.6.9"
+dependencies = [
+ "axum",
+ "chrono",
+ "clap",
+ "futures-util",
+ "once_cell",
+ "rand 0.10.2",
+ "rustls",
+ "serde",
+ "serde_json",
+ "subprocess",
+ "subtle",
+ "thiserror 2.0.20",
+ "tokio",
+ "tokio-tungstenite 0.30.0",
+ "tokio-util",
+ "tower-http 0.7.0",
+ "tracing",
+ "tracing-subscriber",
+ "url",
+]
+
+[[package]]
+name = "labstreamgate-desktop"
+version = "0.6.9"
+dependencies = [
+ "async-channel",
+ "axum",
+ "bitflags 2.13.1",
+ "build-target",
+ "chrono",
+ "directories",
+ "git-version",
+ "labstreamgate",
+ "local-ip-address",
+ "once_cell",
+ "open",
+ "rand 0.10.2",
+ "reqwest",
+ "rust-embed",
+ "rustc_version",
+ "rustls",
+ "semver",
+ "serde",
+ "serde_json",
+ "sys-locale",
+ "sysinfo 0.39.6",
+ "thiserror 2.0.20",
+ "tokio",
+ "tokio-util",
+ "toml 1.1.4+spec-1.1.0",
+ "tower-http 0.7.0",
+ "tracing",
+ "tracing-appender",
+ "tracing-subscriber",
+ "winres",
+ "woocraft",
+]
+
+[[package]]
 name = "lazy_static"
 version = "1.5.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -9041,68 +9103,6 @@ name = "writeable"
 version = "0.6.4"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "3ad82d2a33cdc9674dc7465672f271e096168fcdbe0f799d9e6db8c5892679dc"
-
-[[package]]
-name = "wsrx"
-version = "0.6.8"
-dependencies = [
- "axum",
- "chrono",
- "clap",
- "futures-util",
- "once_cell",
- "rand 0.10.2",
- "rustls",
- "serde",
- "serde_json",
- "subprocess",
- "subtle",
- "thiserror 2.0.20",
- "tokio",
- "tokio-tungstenite 0.30.0",
- "tokio-util",
- "tower-http 0.7.0",
- "tracing",
- "tracing-subscriber",
- "url",
-]
-
-[[package]]
-name = "wsrx-desktop"
-version = "0.6.8"
-dependencies = [
- "async-channel",
- "axum",
- "bitflags 2.13.1",
- "build-target",
- "chrono",
- "directories",
- "git-version",
- "local-ip-address",
- "once_cell",
- "open",
- "rand 0.10.2",
- "reqwest",
- "rust-embed",
- "rustc_version",
- "rustls",
- "semver",
- "serde",
- "serde_json",
- "sys-locale",
- "sysinfo 0.39.6",
- "thiserror 2.0.20",
- "tokio",
- "tokio-util",
- "toml 1.1.4+spec-1.1.0",
- "tower-http 0.7.0",
- "tracing",
- "tracing-appender",
- "tracing-subscriber",
- "winres",
- "woocraft",
- "wsrx",
-]
 
 [[package]]
 name = "x11"

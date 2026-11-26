@@ -1,7 +1,7 @@
 {
   "name": "@tkkc-sec/labstreamgate-howto",
   "version": "0.4.1",
-  "description": "A simple how-to guide for using wsrx",
+  "description": "A simple how-to guide for using LabStreamGate",
   "type": "module",
   "scripts": {
     "start": "vite",

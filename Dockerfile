@@ -2,7 +2,7 @@ FROM rust:1.95-bookworm AS builder
 
 WORKDIR /src
 COPY . .
-RUN cargo build --locked --release -p wsrx --bin labstreamgate
+RUN cargo build --locked --release -p labstreamgate --bin labstreamgate
 
 FROM debian:bookworm-slim
 
@@ -18,9 +18,9 @@ USER labstreamgate
 EXPOSE 8080
 VOLUME ["/var/lib/labstreamgate"]
 
-ENV WSRX_STATE_FILE=/var/lib/labstreamgate/tunnels.json \
-    WSRX_ALLOWED_TARGET_HOSTS=127.0.0.1 \
-    WSRX_MAX_CONNECTIONS=4096
+ENV STREAMGATE_STATE_FILE=/var/lib/labstreamgate/tunnels.json \
+    STREAMGATE_ALLOWED_TARGET_HOSTS=127.0.0.1 \
+    STREAMGATE_MAX_CONNECTIONS=4096
 
 HEALTHCHECK --interval=15s --timeout=3s --retries=3 \
     CMD wget --quiet --spider http://127.0.0.1:8080/health || exit 1

@@ -119,9 +119,9 @@ pub(crate) fn render_connections(
                                 .child(if is_default {
                                     i18n::t("This scope is controlled by you manually.")
                                 } else if allowed {
-                                    i18n::t("This domain can control wsrx on your local network.")
+                                    i18n::t("This domain can control LabStreamGate on your local network.")
                                 } else {
-                                    i18n::t("This domain requested controlling wsrx.")
+                                    i18n::t("This domain requested controlling LabStreamGate.")
                                 }),
                         )
                         .when(is_default, |this| {

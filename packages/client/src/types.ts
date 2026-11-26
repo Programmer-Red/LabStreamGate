@@ -1,18 +1,18 @@
-export enum WsrxState {
+export enum StreamGateState {
   Invalid,
   Pending,
   Usable,
 }
 
-export enum WsrxFeature {
+export enum StreamGateFeature {
   Basic = "basic",
   Pingfall = "pingfall",
 }
 
 type FeatureSettings = {
-  [K in WsrxFeature]: K extends WsrxFeature.Basic
-  ? {}
-  : K extends WsrxFeature.Pingfall
+  [K in StreamGateFeature]: K extends StreamGateFeature.Basic
+  ? Record<string, never>
+  : K extends StreamGateFeature.Pingfall
   ? {
     /**
      * The status code that should drop the connection when pingfall is detected
@@ -26,28 +26,28 @@ type FeatureSettings = {
   : never;
 };
 
-export interface WsrxOptions {
+export interface StreamGateOptions {
   /**
    * Website name for local scope
    */
   name: string;
   /**
-   * API base URL from local wsrx, typically `http://localhost:3307`
+   * API base URL from local LabStreamGate controller, typically `http://127.0.0.1:3307`
    */
   api: string;
   /**
    * Enabled features
    */
-  features: WsrxFeature[];
+  features: StreamGateFeature[];
   /**
    * Feature settings
    */
   settings?: Partial<FeatureSettings>;
 }
 
-export interface WsrxInstance {
+export interface StreamGateInstance {
   /**
-   * Instance name, will be displayed in local wsrx UI
+   * Instance name, will be displayed in local LabStreamGate UI
    */
   label?: string;
   /**
@@ -56,21 +56,17 @@ export interface WsrxInstance {
   remote: string;
   /**
    * Local proxy server addr, use `127.0.0.1:0` to bind to a random port
-   *
-   * The corresponding port will be returned when the instance is added
    */
   local: string;
   /**
    * Instance latency, in milliseconds, -1 means unusable
-   *
-   * This field is maintained by wsrx
    */
   latency?: number;
 }
 
-export const WSRX_MINIMUM_REQUIRED = "0.4";
+export const STREAMGATE_MINIMUM_REQUIRED = "0.4";
 
-export enum WsrxErrorKind {
+export enum StreamGateErrorKind {
   DaemonUnavailable = "daemon_unavailable",
   VersionMismatch = "daemon_version_mismatch",
   DaemonError = "daemon_error",
@@ -78,14 +74,11 @@ export enum WsrxErrorKind {
   MissingScope = "missing_scope",
 }
 
-export class WsrxError extends Error {
-  /**
-   * The kind of error
-   */
-  kind: WsrxErrorKind;
-  constructor(kind: WsrxErrorKind, message: string) {
+export class StreamGateError extends Error {
+  kind: StreamGateErrorKind;
+  constructor(kind: StreamGateErrorKind, message: string) {
     super(message);
-    this.name = "WsrxError";
+    this.name = "StreamGateError";
     this.kind = kind;
   }
 }

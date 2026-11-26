@@ -23,7 +23,7 @@ pub(crate) fn render_network_logs(
 /// Formats log entries into a single plain-text document matching the default
 /// `tracing-subscriber` console output:
 ///
-/// `2026-08-22T14:07:00.123456Z  INFO wsrx_desktop::daemon: message`
+/// `2026-08-22T14:07:00.123456Z  INFO labstreamgate_desktop::daemon: message`
 pub(crate) fn format_logs(logs: &[LogEntry]) -> String {
     let mut out = String::with_capacity(logs.len() * 96);
     for log in logs {
@@ -318,8 +318,7 @@ mod tests {
 
     #[test]
     fn find_level_ignores_level_words_in_messages_and_targets() {
-        let line =
-            "2026-08-22T14:07:00.123456Z  INFO wsrx_desktop::daemon: error in handler warning";
+        let line = "2026-08-22T14:07:00.123456Z  INFO labstreamgate_desktop::daemon: error in handler warning";
         let (offset, level) = find_level(line).unwrap();
         assert_eq!(level, "INFO");
         assert_eq!(&line[offset..offset + level.len()], "INFO");
@@ -330,24 +329,24 @@ mod tests {
 
     #[test]
     fn spans_for_line_parses_timestamp_level_module() {
-        let line = "2026-08-22T14:07:00.123456Z  INFO wsrx_desktop::daemon: something happened";
+        let line =
+            "2026-08-22T14:07:00.123456Z  INFO labstreamgate_desktop::daemon: something happened";
         let spans = spans_for_line(line).unwrap();
         assert_eq!(&line[spans.timestamp], "2026-08-22T14:07:00.123456Z");
         assert_eq!(&line[spans.level], "INFO");
         let module = spans.module.unwrap();
-        assert_eq!(&line[module], "wsrx_desktop::daemon:");
+        assert_eq!(&line[module], "labstreamgate_desktop::daemon:");
     }
 
     #[test]
     fn spans_for_line_keeps_message_colon_space_untouched() {
         // `::` inside the module path and a later `: ` inside the message
         // must not confuse the module boundary.
-        let line =
-            "2026-08-22T14:07:00.123456Z ERROR wsrx_desktop::daemon::workers: read timeout: retry";
+        let line = "2026-08-22T14:07:00.123456Z ERROR labstreamgate_desktop::daemon::workers: read timeout: retry";
         let spans = spans_for_line(line).unwrap();
         assert_eq!(&line[spans.level], "ERROR");
         let module = spans.module.unwrap();
-        assert_eq!(&line[module], "wsrx_desktop::daemon::workers:");
+        assert_eq!(&line[module], "labstreamgate_desktop::daemon::workers:");
     }
 
     #[test]
@@ -422,7 +421,7 @@ mod tests {
                     .unwrap()
                     .with_timezone(&chrono::Utc),
                 level: "WARN".into(),
-                target: "wsrx_desktop::daemon".into(),
+                target: "labstreamgate_desktop::daemon".into(),
                 fields: crate::models::LogEntryFields {
                     message: "retrying after timeout".into(),
                 },
@@ -446,7 +445,10 @@ mod tests {
             "2026-08-22T14:07:00.123456Z"
         );
         assert_eq!(&text[spans.level], "WARN");
-        assert_eq!(&text[spans.module.unwrap()], "wsrx_desktop::daemon:");
+        assert_eq!(
+            &text[spans.module.unwrap()],
+            "labstreamgate_desktop::daemon:"
+        );
 
         let second = &text[first_len..];
         let spans = spans_for_line(second).unwrap();

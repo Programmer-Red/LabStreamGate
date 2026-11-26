@@ -33,13 +33,13 @@ jobs:
         run: cargo fmt --all -- --check
 
       - name: Check gateway
-        run: cargo check --locked -p wsrx --bin labstreamgate
+        run: cargo check --locked -p labstreamgate --bin labstreamgate
 
       - name: Test transport library and gateway
-        run: cargo test --locked -p wsrx --lib --bin labstreamgate
+        run: cargo test --locked -p labstreamgate --lib --bin labstreamgate
 
       - name: Lint gateway
-        run: cargo clippy --locked -p wsrx --bin labstreamgate -- -D warnings
+        run: cargo clippy --locked -p labstreamgate --bin labstreamgate -- -D warnings
 
   container:
     name: Container image

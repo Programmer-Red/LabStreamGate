@@ -110,10 +110,21 @@ pub(crate) fn render_settings(
                             };
                             daemon::persist_settings_sync(&state);
                             if running {
-                                if let Err(err) = crate::tray::enable(cx, &state) {
-                                    tracing::error!("failed to enable system tray: {err}");
+                                match crate::tray::enable(cx, &state) {
+                                    Ok(()) => state
+                                        .tray_active
+                                        .store(true, std::sync::atomic::Ordering::Relaxed),
+                                    Err(err) => {
+                                        state
+                                            .tray_active
+                                            .store(false, std::sync::atomic::Ordering::Relaxed);
+                                        tracing::error!("failed to enable system tray: {err}");
+                                    }
                                 }
                             } else {
+                                state
+                                    .tray_active
+                                    .store(false, std::sync::atomic::Ordering::Relaxed);
                                 crate::tray::disable(cx);
                             }
                             let _ = weak.update(cx, |root, cx| {

@@ -17,12 +17,19 @@ pub fn project_dirs() -> ProjectDirs {
 
 /// The lock file used for single-instance detection. Contains the API port.
 pub fn lock_file_path() -> std::path::PathBuf {
+    project_dirs().data_local_dir().join(".streamgate.lock")
+}
+
+fn legacy_lock_file_path() -> std::path::PathBuf {
     project_dirs().data_local_dir().join(".rx.is.alive")
 }
 
 /// Writes the lock file with the API server port.
 pub fn write_lock_file(port: u16) {
     let lock_file = lock_file_path();
+    if let Some(parent) = lock_file.parent() {
+        let _ = std::fs::create_dir_all(parent);
+    }
     std::fs::write(&lock_file, port.to_string()).unwrap_or_else(|err| {
         error!("Failed to write lock file {}: {err}", lock_file.display());
         std::process::exit(1);
@@ -38,33 +45,34 @@ pub fn remove_lock_file(lock_file: &Path) {
     });
 }
 
-/// Checks whether another wsrx instance is already running. When one is found,
+/// Checks whether another LabStreamGate instance is already running. When one is found,
 /// it is notified to pop up its window and this instance should exit.
 ///
 /// Returns `true` when the running instance was notified successfully.
 pub fn try_notify_existing_instance() -> bool {
-    let lock_file = lock_file_path();
-    if !lock_file.exists() {
-        return false;
-    }
-
-    eprintln!("Detected existing instance lock file. Trying to notify running app...");
-
-    let Some(api_port) = read_lock_file_port(&lock_file) else {
-        return false;
-    };
-
-    match notify_existing_instance(api_port) {
-        Ok(()) => {
-            eprintln!("Notification sent.");
-            true
+    for candidate in [lock_file_path(), legacy_lock_file_path()] {
+        if !candidate.exists() {
+            continue;
         }
-        Err(err) => {
-            eprintln!("Failed to notify existing app: {err}. Removing stale lock file.");
-            remove_lock_file(&lock_file);
-            false
+
+        eprintln!("Detected existing instance lock file. Trying to notify running app...");
+
+        let Some(api_port) = read_lock_file_port(&candidate) else {
+            continue;
+        };
+
+        match notify_existing_instance(api_port) {
+            Ok(()) => {
+                eprintln!("Notification sent.");
+                return true;
+            }
+            Err(err) => {
+                eprintln!("Failed to notify existing app: {err}. Removing stale lock file.");
+                remove_lock_file(&candidate);
+            }
         }
     }
+    false
 }
 
 fn read_lock_file_port(lock_file: &Path) -> Option<u16> {
@@ -99,7 +107,10 @@ fn notify_existing_instance(api_port: u16) -> Result<(), String> {
 
     let response = client
         .post(format!("http://127.0.0.1:{api_port}/popup"))
-        .header("User-Agent", format!("wsrx/{}", env!("CARGO_PKG_VERSION")))
+        .header(
+            "User-Agent",
+            format!("LabStreamGate/{}", env!("CARGO_PKG_VERSION")),
+        )
         .send()
         .map_err(|err| err.to_string())?;
 
@@ -111,8 +122,8 @@ fn notify_existing_instance(api_port: u16) -> Result<(), String> {
 }
 
 /// Prepares the log directory for a new session: prunes archived logs older
-/// than 3 days and archives any `wsrx.log` left over from a previous (crashed)
-/// session, so the current session always starts with a clean log.
+/// than 3 days and archives any `labstreamgate.log` left over from a previous
+/// (crashed) session, so the current session always starts with a clean log.
 ///
 /// Must be called before the logger is initialized and only after the
 /// single-instance check (otherwise it would archive the running instance's
@@ -151,28 +162,34 @@ pub fn prepare_log_dir() {
     archive_current_log();
 }
 
-/// Archives the current session's `wsrx.log` to a timestamped file so the
-/// live file stays scoped to a single run. Idempotent: a no-op when there is
-/// no live log.
+/// Archives the current session's `labstreamgate.log` (and any legacy `wsrx.log`)
+/// to a timestamped file so the live file stays scoped to a single run.
+/// Idempotent: a no-op when there is no live log.
 pub fn archive_current_log() {
     let dirs = project_dirs();
     let log_dir = dirs.data_local_dir().join("logs");
-    let live = log_dir.join("wsrx.log");
-    if !live.exists() {
-        return;
-    }
-
     let timestamp = std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
         .map(|d| d.as_secs())
         .unwrap_or(0);
-    let archive = log_dir.join(format!("wsrx-{timestamp}.log"));
-    if let Err(err) = std::fs::rename(&live, &archive) {
-        eprintln!("Failed to archive log {}: {err}", live.display());
+
+    for (live_name, archive_prefix) in [
+        ("labstreamgate.log", "labstreamgate"),
+        ("wsrx.log", "labstreamgate-legacy"),
+    ] {
+        let live = log_dir.join(live_name);
+        if !live.exists() {
+            continue;
+        }
+        let archive = log_dir.join(format!("{archive_prefix}-{timestamp}.log"));
+        if let Err(err) = std::fs::rename(&live, &archive) {
+            eprintln!("Failed to archive log {}: {err}", live.display());
+        }
     }
 }
 
 /// Removes the single-instance lock file if present.
 pub fn remove_lock() {
     remove_lock_file(lock_file_path().as_path());
+    remove_lock_file(legacy_lock_file_path().as_path());
 }

@@ -124,13 +124,13 @@ The backend owns the strip's **geometry** (width/position), so several status
 strips (log levels, git, LSP diagnostics…) can share the track side by side
 instead of one status claiming the full width.
 
-**WSRX (`LogBackend`)**: already returns one level-colored line per requested
+**LabStreamGate (`LogBackend`)**: already returns one level-colored line per requested
 row (severity alpha, transparent for level-less rows) — **no changes**.
 
 ## 4. Implementation steps (scope of changes)
 
 All rendering changes are **concentrated in woocraft** — the backend API
-shape is unchanged and WSRX is untouched:
+shape is unchanged and LabStreamGate is untouched:
 
 1. `woocraft` state.rs `render_vertical_scrollbar` — replace the current
    mini-viewport window (`[top_line, +capacity)`) with the fit/windowed
@@ -146,9 +146,9 @@ shape is unchanged and WSRX is untouched:
    - keep the transparent-row skip (`color.a <= 0.0`).
 2. `woocraft` docs: contract above (row space, budget, scaling).
 3. tests: extend woocraft preview tests for fit/windowed window selection and
-   tiling; keep WSRX `LogBackend` tests unchanged.
+   tiling; keep LabStreamGate `LogBackend` tests unchanged.
 4. run `scrollbar-preview-simulate.py` to re-verify the numeric properties.
-5. `WSRX`: zero code changes — only the woocraft dependency bump.
+5. `LabStreamGate`: zero code changes — only the woocraft dependency bump.
 
 ## 5. Acceptance
 

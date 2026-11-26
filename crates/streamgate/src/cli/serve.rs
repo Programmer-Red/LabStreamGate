@@ -21,6 +21,7 @@ use axum::{
     response::{IntoResponse, Response},
     routing::get,
 };
+use labstreamgate::{ProxyStats, TrafficDirection, TrafficObserver, proxy_observed};
 use serde::{Deserialize, Serialize};
 use subtle::ConstantTimeEq;
 use tokio::{
@@ -31,7 +32,6 @@ use tokio::{
 use tokio_util::sync::CancellationToken;
 use tower_http::trace::TraceLayer;
 use tracing::{Span, debug, error, info};
-use wsrx::{ProxyStats, TrafficDirection, TrafficObserver, proxy_observed};
 
 use crate::cli::{
     capture::{
@@ -55,16 +55,19 @@ pub async fn launch(
     init_logger(log_json.unwrap_or(false));
 
     let secret = secret
-        .or_else(|| std::env::var("WSRX_ADMIN_TOKEN").ok())
-        .or_else(|| std::env::var("TUNNEL_GATEWAY_ADMIN_TOKEN").ok());
+        .or_else(|| std::env::var("STREAMGATE_ADMIN_TOKEN").ok())
+        .or_else(|| std::env::var("TUNNEL_GATEWAY_ADMIN_TOKEN").ok())
+        .or_else(|| std::env::var("WSRX_ADMIN_TOKEN").ok());
     let Some(secret) = secret.filter(|value| value.len() >= 32) else {
-        error!("WSRX_ADMIN_TOKEN must contain at least 32 characters; refusing to start");
+        error!(
+            "STREAMGATE_ADMIN_TOKEN (or TUNNEL_GATEWAY_ADMIN_TOKEN) must contain at least 32 characters; refusing to start"
+        );
         return;
     };
 
     let allowed_target_hosts = parse_allowed_hosts(allowed_target_hosts);
     if allowed_target_hosts.is_empty() {
-        error!("WSRX_ALLOWED_TARGET_HOSTS must contain at least one explicit target host");
+        error!("STREAMGATE_ALLOWED_TARGET_HOSTS must contain at least one explicit target host");
         return;
     }
     let state_file = state_file.map(PathBuf::from);
@@ -460,6 +463,27 @@ async fn process_traffic(
             }
         }
 
+        // Write an immediate `active` audit entry so long-lived HTTP Keep-Alive or
+        // interactive shell connections appear immediately in the admin panel.
+        let initial_capture_path = capture
+            .as_ref()
+            .map(|session| session.relative_path.clone());
+        write_audit_with_end(
+            &state,
+            &record,
+            &instance_id,
+            &connection_id,
+            client,
+            started_at,
+            0,
+            ProxyStats::default(),
+            "active".to_string(),
+            initial_capture_path,
+            0,
+            false,
+        )
+        .await;
+
         let capture_observer = capture
             .as_ref()
             .map(|session| session.observer.clone() as Arc<dyn TrafficObserver>);
@@ -551,6 +575,29 @@ async fn write_audit(
     client: SocketAddr, started_at: u128, stats: ProxyStats, result: String,
     capture_path: Option<String>, captured_bytes: u64, capture_truncated: bool,
 ) {
+    write_audit_with_end(
+        state,
+        record,
+        instance_id,
+        connection_id,
+        client,
+        started_at,
+        unix_timestamp_millis(),
+        stats,
+        result,
+        capture_path,
+        captured_bytes,
+        capture_truncated,
+    )
+    .await;
+}
+
+#[allow(clippy::too_many_arguments)]
+async fn write_audit_with_end(
+    state: &GlobalState, record: &TunnelRecord, instance_id: &str, connection_id: &str,
+    client: SocketAddr, started_at: u128, ended_at: u128, stats: ProxyStats, result: String,
+    capture_path: Option<String>, captured_bytes: u64, capture_truncated: bool,
+) {
     let audit = ConnectionAudit {
         connection_id: connection_id.into(),
         instance_id: instance_id.into(),
@@ -560,7 +607,7 @@ async fn write_audit(
         client_ip: client.ip().to_string(),
         target: record.target.clone(),
         started_at,
-        ended_at: unix_timestamp_millis(),
+        ended_at,
         client_to_target_bytes: stats.client_to_target,
         target_to_client_bytes: stats.target_to_client,
         result,
@@ -586,6 +633,12 @@ fn forwarded_client(headers: &HeaderMap, peer: SocketAddr) -> SocketAddr {
         .and_then(|value| value.to_str().ok())
         .and_then(|value| value.split(',').next())
         .and_then(|value| value.trim().parse().ok())
+        .or_else(|| {
+            headers
+                .get("x-real-ip")
+                .and_then(|value| value.to_str().ok())
+                .and_then(|value| value.trim().parse().ok())
+        })
         .map(|ip| SocketAddr::new(ip, peer.port()))
         .unwrap_or(peer)
 }

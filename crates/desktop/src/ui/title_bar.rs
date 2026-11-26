@@ -20,7 +20,7 @@ pub(crate) fn render_title_bar(
         .on_close_window({
             let state = state.clone();
             move |_: &ClickEvent, window: &mut Window, cx: &mut App| {
-                if state.settings.blocking_read().running_in_tray {
+                if state.should_hide_to_tray_on_close() {
                     window.remove_window();
                 } else {
                     daemon::shutdown(&state);

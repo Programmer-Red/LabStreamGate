@@ -7,7 +7,7 @@ use super::{connections, get_started, network_logs, settings, sidebar, title_bar
 use crate::{
     daemon::{self, ServerState, UiEvent},
     i18n, launcher,
-    models::{InstanceData, LogEntry, ScopeData, WsrxDesktopConfig},
+    models::{DesktopConfig, InstanceData, LogEntry, ScopeData},
 };
 
 /// The page currently displayed in the main content area.
@@ -34,7 +34,7 @@ pub struct RootView {
     has_updates: bool,
 
     // --- settings ---
-    pub(crate) settings: WsrxDesktopConfig,
+    pub(crate) settings: DesktopConfig,
 
     // --- get started page ---
     interfaces: Vec<String>,
@@ -218,7 +218,7 @@ impl RootView {
         &self.state
     }
 
-    pub(crate) fn settings(&self) -> &WsrxDesktopConfig {
+    pub(crate) fn settings(&self) -> &DesktopConfig {
         &self.settings
     }
 

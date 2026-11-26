@@ -1,21 +1,124 @@
 use std::{
     collections::VecDeque,
-    sync::{Arc, OnceLock},
+    sync::{
+        Arc, OnceLock,
+        atomic::{AtomicBool, Ordering},
+    },
 };
 
 use async_channel::{Receiver, Sender, unbounded};
+use labstreamgate::tunnel::Tunnel;
 use serde::{Deserialize, Serialize};
 use tokio::sync::RwLock;
 use tracing::{debug, error, info, warn};
-use wsrx::tunnel::Tunnel;
 
 use crate::{
     launcher,
-    models::{InstanceData, LogEntry, ScopeData, WsrxDesktopConfig},
+    models::{DesktopConfig, FeatureFlags, InstanceData, LogEntry, ScopeData},
 };
 
-mod api;
+pub mod api;
 mod workers;
+
+/// Canonical scope host representing all official `https://*.xujclab.com` origins.
+pub const OFFICIAL_XUJCLAB_SCOPE_HOST: &str = "https://ctf.xujclab.com";
+pub const OFFICIAL_XUJCLAB_SCOPE_NAME: &str = "xujclab";
+
+/// Returns `true` when `origin` is an HTTPS origin under `xujclab.com` or `*.xujclab.com`
+/// (with or without an explicit port, such as `https://campus.xujclab.com:8798` or
+/// `https://edge-hk.xujclab.com:50412`).
+pub fn is_official_xujclab_origin(origin: &str) -> bool {
+    let trimmed = origin.trim().trim_end_matches('/');
+    let Some(rest) = trimmed
+        .strip_prefix("https://")
+        .or_else(|| trimmed.strip_prefix("HTTPS://"))
+    else {
+        return false;
+    };
+    if rest.is_empty()
+        || rest
+            .bytes()
+            .any(|b| matches!(b, b'/' | b'?' | b'#' | b'@' | b' '))
+    {
+        return false;
+    }
+    let host = if let Some((h, port)) = rest.rsplit_once(':') {
+        if port.parse::<u16>().is_err() {
+            return false;
+        }
+        h
+    } else {
+        rest
+    };
+    let lower = host.to_ascii_lowercase();
+    if lower == "xujclab.com" {
+        return true;
+    }
+    if let Some(sub) = lower.strip_suffix(".xujclab.com") {
+        return !sub.is_empty()
+            && !sub.starts_with('.')
+            && !sub.contains("..")
+            && sub
+                .bytes()
+                .all(|b| b.is_ascii_alphanumeric() || matches!(b, b'-' | b'.'));
+    }
+    false
+}
+
+/// Maps an HTTP `Origin` header value onto its canonical scope host.
+/// All official `https://*.xujclab.com(:port)` origins share a single `xujclab` scope.
+pub fn canonical_scope_host(origin: &str) -> String {
+    let normalized = origin.trim().trim_end_matches('/');
+    if is_official_xujclab_origin(normalized) {
+        OFFICIAL_XUJCLAB_SCOPE_HOST.to_string()
+    } else {
+        normalized.to_string()
+    }
+}
+
+/// Migrates legacy `xujclab.com` scopes onto the canonical `https://ctf.xujclab.com`
+/// scope and ensures the official `xujclab` scope is ready out of the box.
+pub fn normalize_scopes(raw_scopes: Vec<ScopeData>) -> Vec<ScopeData> {
+    let mut normalized: Vec<ScopeData> = Vec::new();
+    for mut scope in raw_scopes {
+        let canonical = canonical_scope_host(&scope.host);
+        if canonical.is_empty() {
+            continue;
+        }
+        scope.host = canonical.clone();
+        if canonical == OFFICIAL_XUJCLAB_SCOPE_HOST
+            && (scope.name.is_empty() || scope.name.contains("xujclab"))
+        {
+            scope.name = OFFICIAL_XUJCLAB_SCOPE_NAME.to_string();
+        }
+        if let Some(existing) = normalized.iter_mut().find(|s| s.host == canonical) {
+            if scope.state == "allowed" {
+                existing.state = "allowed".to_string();
+            }
+            existing.features |= scope.features;
+        } else {
+            normalized.push(scope);
+        }
+    }
+
+    if !normalized
+        .iter()
+        .any(|s| s.host == OFFICIAL_XUJCLAB_SCOPE_HOST)
+    {
+        normalized.insert(
+            0,
+            ScopeData {
+                host: OFFICIAL_XUJCLAB_SCOPE_HOST.to_string(),
+                name: OFFICIAL_XUJCLAB_SCOPE_NAME.to_string(),
+                state: "allowed".to_string(),
+                features: FeatureFlags::Basic,
+                settings: Default::default(),
+            },
+        );
+    }
+
+    normalized
+}
 
 /// Events pushed from background (tokio) tasks into the UI thread.
 #[derive(Clone, Debug)]
@@ -30,7 +133,7 @@ pub enum UiEvent {
     Logs(Vec<LogEntry>),
     /// Whether a newer release exists on GitHub.
     HasUpdates(bool),
-    /// Another instance asked this app to pop up its window.
+    /// Another instance or pending scope authorization asked this app to pop up its window.
     Popup,
     /// The system tray asked the app to quit.
     Quit,
@@ -43,7 +146,9 @@ pub enum UiEvent {
 pub struct ServerState {
     pub instances: Arc<RwLock<Vec<ProxyInstance>>>,
     pub scopes: Arc<RwLock<Vec<ScopeData>>>,
-    pub settings: Arc<RwLock<WsrxDesktopConfig>>,
+    pub settings: Arc<RwLock<DesktopConfig>>,
+    /// Whether the OS system tray icon is currently active (safe to hide window on close).
+    pub tray_active: Arc<AtomicBool>,
     /// The API server port, once bound.
     pub api_port: Arc<RwLock<u16>>,
     /// Whether a newer release exists on GitHub.
@@ -53,7 +158,13 @@ pub struct ServerState {
     pub events: Sender<UiEvent>,
 }
 
-/// A proxied tunnel instance, wrapping the underlying `wsrx::tunnel::Tunnel`.
+impl ServerState {
+    pub fn should_hide_to_tray_on_close(&self) -> bool {
+        self.settings.blocking_read().running_in_tray && self.tray_active.load(Ordering::Relaxed)
+    }
+}
+
+/// A proxied tunnel instance, wrapping the underlying `labstreamgate::tunnel::Tunnel`.
 pub struct ProxyInstance {
     pub data: InstanceData,
     _tunnel: Tunnel,
@@ -139,8 +250,9 @@ pub fn spawn_background() -> (ServerState, Receiver<UiEvent>) {
     let (events, events_rx) = unbounded();
     let state = ServerState {
         instances: Arc::new(RwLock::new(vec![])),
-        scopes: Arc::new(RwLock::new(vec![])),
-        settings: Arc::new(RwLock::new(WsrxDesktopConfig::default())),
+        scopes: Arc::new(RwLock::new(normalize_scopes(vec![]))),
+        settings: Arc::new(RwLock::new(DesktopConfig::default())),
+        tray_active: Arc::new(AtomicBool::new(false)),
         api_port: Arc::new(RwLock::new(0)),
         has_updates: Arc::new(RwLock::new(false)),
         logs: Arc::new(RwLock::new(VecDeque::new())),
@@ -200,12 +312,14 @@ pub fn load_persisted_state(state: &ServerState) {
             }
         })
         .unwrap_or(ScopesConfig { scopes: vec![] });
-    debug!("Loaded scopes: {:?}", scopes);
-    *state.scopes.blocking_write() = scopes.scopes;
+    let migrated = normalize_scopes(scopes.scopes);
+    debug!("Loaded scopes: {:?}", migrated);
+    write_scopes_to_disk(&migrated);
+    *state.scopes.blocking_write() = migrated;
 
     // Config
     let config_file = launcher::project_dirs().config_dir().join("config.toml");
-    let config: WsrxDesktopConfig = std::fs::read_to_string(&config_file)
+    let config: DesktopConfig = std::fs::read_to_string(&config_file)
         .ok()
         .and_then(|config| match toml::from_str(&config) {
             Ok(config) => Some(config),
@@ -252,7 +366,7 @@ fn save_scopes(scopes: &Arc<RwLock<Vec<ScopeData>>>) {
     write_scopes_to_disk(&scopes.blocking_read());
 }
 
-fn write_settings_to_disk(settings: &WsrxDesktopConfig) {
+fn write_settings_to_disk(settings: &DesktopConfig) {
     let config_file = launcher::project_dirs().config_dir().join("config.toml");
     let config = toml::to_string(settings).unwrap_or_else(|e| {
         error!("Failed to serialize config: {}", e);
@@ -261,7 +375,7 @@ fn write_settings_to_disk(settings: &WsrxDesktopConfig) {
     persist_to(config_file, config);
 }
 
-fn save_config(settings: &Arc<RwLock<WsrxDesktopConfig>>) {
+fn save_config(settings: &Arc<RwLock<DesktopConfig>>) {
     write_settings_to_disk(&settings.blocking_read());
 }
 
@@ -302,7 +416,15 @@ fn persist_to(config_file: std::path::PathBuf, config: String) {
 pub async fn launch_instance(
     state: &ServerState, instance_data: &InstanceData,
 ) -> Result<InstanceData, (axum::http::StatusCode, String)> {
-    use wsrx::utils::create_tcp_listener;
+    use labstreamgate::utils::create_tcp_listener;
+
+    let remote_trimmed = instance_data.remote.trim();
+    if !remote_trimmed.starts_with("ws://") && !remote_trimmed.starts_with("wss://") {
+        return Err((
+            axum::http::StatusCode::BAD_REQUEST,
+            "Remote address must use ws:// or wss://".to_string(),
+        ));
+    }
 
     let listener = create_tcp_listener(&instance_data.local).await?;
 
@@ -325,7 +447,7 @@ pub async fn launch_instance(
     // within the same scope, only updating its label.
     if let Some(instance) = instances
         .iter_mut()
-        .find(|i| i.remote == instance_data.remote && i.scope_host == scope)
+        .find(|i| i.remote == remote_trimmed && i.scope_host == scope)
     {
         if instance.label != instance_data.label {
             instance.label = instance_data.label.clone();
@@ -341,7 +463,7 @@ pub async fn launch_instance(
         instance_data.label.clone(),
         scope.clone(),
         listener,
-        instance_data.remote.clone(),
+        remote_trimmed,
     );
 
     let instance_resp: InstanceData = (&instance).into();

@@ -82,7 +82,7 @@
 
             buildInputs = commonBuildInputs;
 
-            WSRX_GIT_VERSION =
+            STREAMGATE_GIT_VERSION =
               self.shortRev or self.dirtyShortRev or "unknown";
 
             meta = with lib; {
@@ -92,27 +92,27 @@
             };
           };
 
-          wsrx = pkgs.rustPlatform.buildRustPackage (commonArgs // {
-            pname = "wsrx";
+          labstreamgate = pkgs.rustPlatform.buildRustPackage (commonArgs // {
+            pname = "labstreamgate";
 
             cargoBuildFlags = [
               "-p"
-              "wsrx"
+              "labstreamgate"
             ];
 
             cargoTestFlags = [
               "-p"
-              "wsrx"
+              "labstreamgate"
             ];
 
             meta = commonArgs.meta // {
               description = "Controlled TCP-over-WebSocket forwarding tunnel";
-              mainProgram = "wsrx";
+              mainProgram = "labstreamgate";
             };
           });
 
-          wsrx-desktop = pkgs.rustPlatform.buildRustPackage (commonArgs // {
-            pname = "wsrx-desktop";
+          labstreamgate-desktop = pkgs.rustPlatform.buildRustPackage (commonArgs // {
+            pname = "labstreamgate-desktop";
 
             nativeBuildInputs =
               commonNativeBuildInputs
@@ -126,33 +126,33 @@
 
             cargoBuildFlags = [
               "-p"
-              "wsrx-desktop"
+              "labstreamgate-desktop"
             ];
 
             cargoTestFlags = [
               "-p"
-              "wsrx-desktop"
+              "labstreamgate-desktop"
             ];
 
             postInstall = lib.optionalString stdenv.isLinux ''
-              install -Dm644 freedesktop/wsrx-desktop.desktop \
-                "$out/share/applications/wsrx-desktop.desktop"
-              install -Dm644 freedesktop/wsrx-desktop.svg \
-                "$out/share/icons/hicolor/scalable/apps/wsrx-desktop.svg"
+              install -Dm644 freedesktop/labstreamgate.desktop \
+                "$out/share/applications/labstreamgate.desktop"
+              install -Dm644 freedesktop/labstreamgate.svg \
+                "$out/share/icons/hicolor/scalable/apps/labstreamgate.svg"
 
-              wrapProgram "$out/bin/wsrx-desktop" \
+              wrapProgram "$out/bin/labstreamgate-desktop" \
                 --prefix LD_LIBRARY_PATH : ${lib.makeLibraryPath linuxDesktopLibraries}
             '';
 
             meta = commonArgs.meta // {
               description = "Desktop interface for LabStreamGate";
-              mainProgram = "wsrx-desktop";
+              mainProgram = "labstreamgate-desktop";
             };
           });
         in
         {
-          default = wsrx;
-          inherit wsrx wsrx-desktop;
+          default = labstreamgate;
+          inherit labstreamgate labstreamgate-desktop;
         });
 
       apps = forAllSystems (system:
@@ -164,9 +164,9 @@
           };
         in
         {
-          default = mkApp "wsrx";
-          wsrx = mkApp "wsrx";
-          wsrx-desktop = mkApp "wsrx-desktop";
+          default = mkApp "labstreamgate";
+          labstreamgate = mkApp "labstreamgate";
+          labstreamgate-desktop = mkApp "labstreamgate-desktop";
         });
 
       devShells = forAllSystems (system:

@@ -1,18 +1,20 @@
 use std::{env, fs, path::Path};
 
 fn main() {
+    println!("cargo::rerun-if-env-changed=STREAMGATE_GIT_VERSION");
     println!("cargo::rerun-if-env-changed=WSRX_GIT_VERSION");
     let out_dir = env::var_os("OUT_DIR").unwrap();
     let dest_path = Path::new(&out_dir).join("constants.rs");
-    let git_v = if env::var("WSRX_GIT_VERSION").is_ok() {
-        env::var("WSRX_GIT_VERSION").unwrap().to_uppercase()
-    } else {
-        git_version::git_version!(
-            args = ["--abbrev=8", "--always", "--dirty=*", "--match=''"],
-            fallback = "unknown"
-        )
-        .to_uppercase()
-    };
+    let git_v = env::var("STREAMGATE_GIT_VERSION")
+        .or_else(|_| env::var("WSRX_GIT_VERSION"))
+        .map(|v| v.to_uppercase())
+        .unwrap_or_else(|_| {
+            git_version::git_version!(
+                args = ["--abbrev=8", "--always", "--dirty=*", "--match=''"],
+                fallback = "unknown"
+            )
+            .to_uppercase()
+        });
     let version = format!(
         "{}-{git_v}-{}",
         env!("CARGO_PKG_VERSION"),
@@ -28,7 +30,7 @@ fn main() {
     );
     fs::write(
         dest_path,
-        format!("pub const WSRX_VERSION: &str = \"{version}\";\npub const WSRX_FULL_VERSION: &str = \"{full_version}\";\n"),
+        format!("pub const STREAMGATE_VERSION: &str = \"{version}\";\npub const STREAMGATE_FULL_VERSION: &str = \"{full_version}\";\n"),
     )
     .unwrap();
     if cfg!(target_os = "windows") {

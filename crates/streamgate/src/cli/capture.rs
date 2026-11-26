@@ -8,13 +8,13 @@ use std::{
     time::{SystemTime, UNIX_EPOCH},
 };
 
+use labstreamgate::{TrafficDirection, TrafficObserver};
 use tokio::{
     fs::{File, OpenOptions},
     io::AsyncWriteExt,
     sync::{Mutex, mpsc, oneshot},
 };
 use tracing::error;
-use wsrx::{TrafficDirection, TrafficObserver};
 
 enum CaptureMessage {
     Packet(TrafficDirection, Vec<u8>, SystemTime),

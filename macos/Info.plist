@@ -26,5 +26,16 @@
   <string>11.0</string>
   <key>NSHighResolutionCapable</key>
   <true/>
+  <key>CFBundleURLTypes</key>
+  <array>
+    <dict>
+      <key>CFBundleURLName</key>
+      <string>com.xujclab.streamgate</string>
+      <key>CFBundleURLSchemes</key>
+      <array>
+        <string>com.xujclab.streamgate</string>
+      </array>
+    </dict>
+  </array>
 </dict>
 </plist>

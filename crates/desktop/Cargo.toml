@@ -1,18 +1,18 @@
 [package]
 authors.workspace      = true
 description            = "Controlled TCP-over-WebSocket forwarding tunnel."
-documentation          = "https://docs.rs/wsrx"
+documentation          = "https://github.com/Programmer-Red/LabStreamGate"
 edition.workspace      = true
 homepage.workspace     = true
 license.workspace      = true
-name                   = "wsrx-desktop"
+name                   = "labstreamgate-desktop"
 readme                 = "../../README.md"
 repository.workspace   = true
 rust-version.workspace = true
 version.workspace      = true
 
 [dependencies]
-wsrx = { path = "../wsrx" }
+labstreamgate = { path = "../streamgate" }
 
 woocraft      = { workspace = true, features = ["tray"] }
 

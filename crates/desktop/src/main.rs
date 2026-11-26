@@ -8,10 +8,10 @@ use std::{
     sync::{Arc, Mutex},
 };
 
+use labstreamgate_desktop::{daemon, daemon::UiEvent, launcher, logging, tray, ui::RootView};
 use woocraft::gpui::{
     App, Bounds, QuitMode, Size as GpuiSize, WindowBounds, WindowHandle, WindowOptions, px,
 };
-use wsrx_desktop::{daemon, daemon::UiEvent, launcher, logging, tray, ui::RootView};
 
 type WindowRef = Arc<Mutex<Option<WindowHandle<RootView>>>>;
 
@@ -24,7 +24,7 @@ fn main() -> Result<(), Box<dyn Error>> {
     }
 
     // Prepare the log directory: prune >3-day archives and archive any stale
-    // `wsrx.log` from a crashed session, so this session starts clean.
+    // `labstreamgate.log` from a crashed session, so this session starts clean.
     launcher::prepare_log_dir();
 
     // Initialize the logger.
@@ -42,7 +42,7 @@ fn main() -> Result<(), Box<dyn Error>> {
 
     // Launch the GPUI application with the woocraft component library.
     woocraft::gpui_platform::application()
-        .with_assets(wsrx_desktop::assets::asset_source())
+        .with_assets(labstreamgate_desktop::assets::asset_source())
         .run(move |cx: &mut App| {
             woocraft::init(cx);
             cx.activate(true);
@@ -55,10 +55,18 @@ fn main() -> Result<(), Box<dyn Error>> {
             let _window = open_main_window(cx, state.clone(), &window_ref);
 
             // Enable the tray icon when configured.
-            if state.settings.blocking_read().running_in_tray
-                && let Err(err) = tray::enable(cx, &state)
-            {
-                tracing::error!("failed to enable system tray: {err}");
+            if state.settings.blocking_read().running_in_tray {
+                match tray::enable(cx, &state) {
+                    Ok(()) => state
+                        .tray_active
+                        .store(true, std::sync::atomic::Ordering::Relaxed),
+                    Err(err) => {
+                        state
+                            .tray_active
+                            .store(false, std::sync::atomic::Ordering::Relaxed);
+                        tracing::error!("failed to enable system tray: {err}");
+                    }
+                }
             }
 
             // Background -> UI event pump.
@@ -218,7 +226,7 @@ fn open_main_window(
             window.on_window_should_close(cx, {
                 let state = state.clone();
                 move |_, cx| {
-                    if state.settings.blocking_read().running_in_tray {
+                    if state.should_hide_to_tray_on_close() {
                         // Close to tray: the window goes away but the app
                         // keeps running (QuitMode::Explicit).
                         true

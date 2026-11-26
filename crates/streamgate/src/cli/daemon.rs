@@ -15,6 +15,10 @@ use axum::{
     routing::get,
 };
 use chrono::{DateTime, Utc};
+use labstreamgate::{
+    tunnel::{Tunnel, TunnelConfig},
+    utils::create_tcp_listener,
+};
 use once_cell::sync::Lazy;
 use serde::{Deserialize, Serialize};
 use tokio::{net::TcpListener, sync::RwLock};
@@ -23,10 +27,6 @@ use tower_http::{
     trace::TraceLayer,
 };
 use tracing::{Span, debug, error, info};
-use wsrx::{
-    tunnel::{Tunnel, TunnelConfig},
-    utils::create_tcp_listener,
-};
 
 use crate::cli::logger::init_logger;
 
@@ -45,7 +45,7 @@ pub async fn launch(
     .await
     .expect("failed to bind port");
     info!(
-        "wsrx daemon is listening on {}",
+        "LabStreamGate daemon is listening on {}",
         listener.local_addr().expect("failed to bind port")
     );
     info!(
@@ -104,23 +104,23 @@ fn build_router(secret: Option<String>) -> axum::Router {
         connections: Default::default(),
     };
     let cors_layer = CorsLayer::new()
-        .allow_methods([Method::GET, Method::POST, Method::DELETE])
+        .allow_methods([Method::GET, Method::POST, Method::DELETE, Method::OPTIONS])
         .allow_headers(Any)
+        .allow_private_network(true)
         .allow_origin(AllowOrigin::predicate(
             |origin: &HeaderValue, _request_parts: &_| {
                 let allowed_origin = ALLOWED_ORIGINS.read().unwrap();
-                for o in allowed_origin.iter() {
-                    if origin.to_str().unwrap_or("").ends_with(o) {
-                        return true;
-                    }
-                }
-                false
+                let req_origin = origin.to_str().unwrap_or("").trim_end_matches('/');
+                allowed_origin
+                    .iter()
+                    .any(|o| req_origin == o.trim_end_matches('/'))
             },
         ));
-    let any_origin_layer = CorsLayer::new()
-        .allow_methods([Method::POST])
+    let handshake_origin_layer = CorsLayer::new()
+        .allow_methods([Method::GET, Method::POST, Method::OPTIONS])
         .allow_headers(Any)
-        .allow_origin(Any);
+        .allow_private_network(true)
+        .allow_origin(AllowOrigin::mirror_request());
     axum::Router::new()
         .merge(
             axum::Router::new()
@@ -141,7 +141,11 @@ fn build_router(secret: Option<String>) -> axum::Router {
         .merge(
             axum::Router::new()
                 .route("/connect", get(get_cors_status).post(add_pending_origin))
-                .layer(any_origin_layer)
+                .route(
+                    "/version",
+                    get(|| async { Json(env!("CARGO_PKG_VERSION")) }),
+                )
+                .layer(handshake_origin_layer)
                 .with_state(state.clone()),
         )
         .layer(axum::middleware::from_fn_with_state(

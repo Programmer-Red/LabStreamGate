@@ -20,7 +20,7 @@ pub struct InstanceData {
     pub scope_host: String,
 }
 
-/// A scope (a website origin) that requested / obtained control of wsrx.
+/// A scope (a website origin) that requested / obtained control of LabStreamGate.
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct ScopeData {
     pub host: String,
@@ -33,7 +33,7 @@ pub struct ScopeData {
 
 /// Desktop application configuration, persisted to `config.toml`.
 #[derive(Clone, Debug, Serialize, Deserialize)]
-pub struct WsrxDesktopConfig {
+pub struct DesktopConfig {
     #[serde(default = "default_theme")]
     pub theme: String,
     #[serde(default = "default_running_in_tray")]
@@ -42,7 +42,7 @@ pub struct WsrxDesktopConfig {
     pub language: String,
 }
 
-impl Default for WsrxDesktopConfig {
+impl Default for DesktopConfig {
     fn default() -> Self {
         Self {
             theme: default_theme(),
@@ -185,5 +185,5 @@ fn default_theme() -> String {
 }
 
 const fn default_running_in_tray() -> bool {
-    false
+    true
 }

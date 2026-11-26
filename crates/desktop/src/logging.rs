@@ -16,7 +16,7 @@ pub fn setup()
     std::fs::create_dir_all(&log_dir)?;
     let file_appender = rolling::RollingFileAppender::builder()
         .rotation(rolling::Rotation::NEVER)
-        .filename_prefix("wsrx")
+        .filename_prefix("labstreamgate")
         .filename_suffix("log");
 
     let file_appender = file_appender.build(std::path::Path::new(&log_dir).canonicalize()?)?;

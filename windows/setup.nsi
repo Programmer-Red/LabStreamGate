@@ -11,7 +11,7 @@ Unicode True
 !define DESCRIPTION                  "Controlled TCP-over-WebSocket forwarding tunnel."
 !define VERSIONMAJOR                 0
 !define VERSIONMINOR                 6
-!define VERSIONBUILD                 8
+!define VERSIONBUILD                 9
 !define INSTALL_DIR_DEFAULT          "$PROGRAMFILES64\${APPNAME}"
 !define MUI_ABORTWARNING
 !define MUI_FINISHPAGE_RUN
@@ -76,6 +76,11 @@ Section "${APPNAME} (required)" SecDummy
   WriteRegDWORD HKLM "Software\Microsoft\Windows\CurrentVersion\Uninstall\${COMPANYNAME} ${APPNAME}" "NoModify"         1
   WriteRegDWORD HKLM "Software\Microsoft\Windows\CurrentVersion\Uninstall\${COMPANYNAME} ${APPNAME}" "NoRepair"         1
   WriteRegDWORD HKLM "Software\Microsoft\Windows\CurrentVersion\Uninstall\${COMPANYNAME} ${APPNAME}" "EstimatedSize"    "$0"
+
+  WriteRegStr   HKCR "com.xujclab.streamgate" "" "URL:LabStreamGate Protocol"
+  WriteRegStr   HKCR "com.xujclab.streamgate" "URL Protocol" ""
+  WriteRegStr   HKCR "com.xujclab.streamgate\DefaultIcon" "" "$INSTDIR\${EXECNAME}.exe,0"
+  WriteRegStr   HKCR "com.xujclab.streamgate\shell\open\command" "" '"$INSTDIR\${EXECNAME}.exe" "%1"'
 SectionEnd
 
 Section "Install Visual C++ Redistributable"
@@ -102,6 +107,7 @@ FunctionEnd
 Section "Uninstall"
   RMDir /r "$INSTDIR"
   Delete "$SMPROGRAMS\${APPNAME}.lnk"
+  DeleteRegKey HKCR "com.xujclab.streamgate"
   DeleteRegKey HKCU "Software\${COMPANYNAME}\${APPNAME}"
   DeleteRegKey HKLM "Software\Microsoft\Windows\CurrentVersion\Uninstall\${COMPANYNAME} ${APPNAME}"
 SectionEnd

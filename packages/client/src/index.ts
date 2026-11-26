@@ -1,56 +1,43 @@
 import { nanoid } from "nanoid";
 import {
-  WSRX_MINIMUM_REQUIRED,
-  WsrxError,
-  WsrxErrorKind,
-  WsrxFeature,
-  WsrxInstance,
-  WsrxOptions,
-  WsrxState,
+  STREAMGATE_MINIMUM_REQUIRED,
+  StreamGateError,
+  StreamGateErrorKind,
+  StreamGateFeature,
+  StreamGateInstance,
+  StreamGateOptions,
+  StreamGateState,
 } from "./types";
 import ky, { HTTPError } from "ky";
 
 /**
  * LabStreamGate browser controller client.
  */
-class Wsrx {
-  private options: WsrxOptions;
-  private state: WsrxState;
-  private instances: WsrxInstance[];
-  private onStateChangeCallbacks: Map<string, (state: WsrxState) => void> =
+class LabStreamGateClient {
+  private options: StreamGateOptions;
+  private state: StreamGateState;
+  private instances: StreamGateInstance[];
+  private onStateChangeCallbacks: Map<string, (state: StreamGateState) => void> =
     new Map();
   private onInstancesChangeCallbacks: Map<
     string,
-    (instances: WsrxInstance[]) => void
+    (instances: StreamGateInstance[]) => void
   > = new Map();
   private interval: ReturnType<typeof setInterval> | null = null;
 
   private tickCounter = 0;
 
-  /**
-   * Creates a new Wsrx client.
-   * @param options - The options for the Wsrx client.
-   */
-  constructor(options: WsrxOptions) {
+  constructor(options: StreamGateOptions) {
     this.options = options;
-    this.state = WsrxState.Invalid;
+    this.state = StreamGateState.Invalid;
     this.instances = [];
   }
 
-  /**
-   * Returns the current state of the wsrx client.
-   */
-  public getState(): WsrxState {
+  public getState(): StreamGateState {
     return this.state;
   }
 
-  /**
-   * Sets the state of the Wsrx client and calls the state change callbacks.
-   * @param state - The new state of the Wsrx client.
-   *
-   * NOTE: This method is private and should not be called directly.
-   */
-  private setState(state: WsrxState): void {
+  private setState(state: StreamGateState): void {
     if (this.state === state) {
       return;
     }
@@ -60,43 +47,25 @@ class Wsrx {
     }
   }
 
-  /**
-   * Returns the current options of the wsrx client.
-   */
-  public getOptions(): WsrxOptions {
+  public getOptions(): StreamGateOptions {
     return this.options;
   }
 
-  /**
-   * Sets the options of the Wsrx client.
-   *
-   * You should call `connect` after setting the options to apply the changes.
-   *
-   * @param options - The new options for the wsrx client.
-   */
-  public setOptions(options: Partial<WsrxOptions>): void {
+  public setOptions(options: Partial<StreamGateOptions>): void {
     this.options = { ...this.options, ...options };
   }
 
-  /**
-   * Starts the tick interval to check the state of the wsrx client.
-   *
-   * This method will be automatically called when the client is connected.
-   * Because of that, you should not call this method directly.
-   *
-   * @returns A promise that resolves when the tick interval is started.
-   */
   private async tick() {
     if (this.interval !== null) {
       clearInterval(this.interval);
     }
     this.interval = setInterval(async () => {
       await this.check();
-      if (this.state === WsrxState.Invalid) {
+      if (this.state === StreamGateState.Invalid) {
         this.interval && clearInterval(this.interval);
-      } else if (this.state === WsrxState.Usable) {
+      } else if (this.state === StreamGateState.Usable) {
         if (this.tickCounter % 5 === 0) {
-          await this.sync().catch(() => { });
+          await this.sync().catch(() => {});
         }
         this.tickCounter++;
         this.tickCounter %= 5;
@@ -104,19 +73,9 @@ class Wsrx {
     }, 3000);
   }
 
-  /**
-   * Syncs instances with local wsrx daemon.
-   *
-   * This method will be automatically called every 15 seconds when the client is in the usable state.
-   *
-   * You can also call this method manually to sync the instances immediately.
-   * For example, if you want to sync the instances after adding or deleting an instance.
-   *
-   * @throws WsrxError if the sync fails.
-   */
   public async sync() {
     try {
-      const data: WsrxInstance[] = await ky
+      const data: StreamGateInstance[] = await ky
         .get(`${this.options.api}/pool`, { retry: 0 })
         .json();
       this.instances = data;
@@ -125,28 +84,23 @@ class Wsrx {
       }
     } catch (e) {
       if (e instanceof HTTPError) {
-        throw new WsrxError(WsrxErrorKind.DaemonError, await e.response.text());
+        throw new StreamGateError(
+          StreamGateErrorKind.DaemonError,
+          await e.response.text(),
+        );
       } else {
-        throw new WsrxError(
-          WsrxErrorKind.DaemonError,
-          "Failed to sync instances, is wsrx daemon running?",
+        throw new StreamGateError(
+          StreamGateErrorKind.DaemonError,
+          "Failed to sync instances, is LabStreamGate running?",
         );
       }
     }
   }
 
-  /**
-   * Connects to the local wsrx daemon.
-   *
-   * This method will automatically check the state of the Wsrx client
-   * and start the tick interval to check the state every second.
-   *
-   * @throws WsrxError if the connection fails.
-   */
   public async connect(): Promise<void> {
     await this.checkVersion();
     await this.check();
-    if (this.state === WsrxState.Invalid)
+    if (this.state === StreamGateState.Invalid) {
       try {
         await ky.post(`${this.options.api}/connect`, {
           json: {
@@ -160,100 +114,80 @@ class Wsrx {
         });
         await this.check();
       } catch (e) {
+        this.setState(StreamGateState.Invalid);
         if (e instanceof HTTPError) {
-          this.setState(WsrxState.Invalid);
-          throw new WsrxError(
-            WsrxErrorKind.DaemonUnavailable,
-            `Failed to connect to wsrx daemon: ${await e.response.text()}`,
-          );
-        } else {
-          this.setState(WsrxState.Invalid);
-          throw new WsrxError(
-            WsrxErrorKind.DaemonUnavailable,
-            "Failed to connect to wsrx daemon",
+          throw new StreamGateError(
+            StreamGateErrorKind.DaemonUnavailable,
+            `Failed to connect to LabStreamGate controller: ${await e.response.text()}`,
           );
         }
+        throw new StreamGateError(
+          StreamGateErrorKind.DaemonUnavailable,
+          "Failed to connect to LabStreamGate controller",
+        );
       }
+    }
     this.tick();
   }
 
-  /**
-   * Checks the version of the wsrx client.
-   *
-   * This method will check the version of the wsrx client and throw an error if the version is lower than required.
-   *
-   * @throws WsrxError if the version is lower than required.
-   */
   private async checkVersion() {
     try {
-      const data: { version: string } = await ky
+      const raw: string | { version: string } = await ky
         .get(`${this.options.api}/version`, { retry: 0 })
         .json();
+      const version = typeof raw === "string" ? raw : raw.version;
 
-      if (data.version < WSRX_MINIMUM_REQUIRED) {
-        this.setState(WsrxState.Invalid);
-        throw new WsrxError(
-          WsrxErrorKind.VersionMismatch,
-          `wsrx version ${data.version} is lower than required ${WSRX_MINIMUM_REQUIRED}`,
+      if (version < STREAMGATE_MINIMUM_REQUIRED) {
+        this.setState(StreamGateState.Invalid);
+        throw new StreamGateError(
+          StreamGateErrorKind.VersionMismatch,
+          `LabStreamGate version ${version} is lower than required ${STREAMGATE_MINIMUM_REQUIRED}`,
         );
       }
     } catch (e) {
+      if (e instanceof StreamGateError) throw e;
       if (e instanceof HTTPError) {
-        if (e.response.status === 404)
-          throw new WsrxError(
-            WsrxErrorKind.VersionMismatch,
-            `wsrx version is lower than required ${WSRX_MINIMUM_REQUIRED}`,
+        if (e.response.status === 404) {
+          throw new StreamGateError(
+            StreamGateErrorKind.VersionMismatch,
+            `LabStreamGate version is lower than required ${STREAMGATE_MINIMUM_REQUIRED}`,
           );
-        else
-          throw new WsrxError(
-            WsrxErrorKind.DaemonError,
-            await e.response.text(),
-          );
+        }
+        throw new StreamGateError(
+          StreamGateErrorKind.DaemonError,
+          await e.response.text(),
+        );
       }
-      throw new WsrxError(
-        WsrxErrorKind.DaemonUnavailable,
-        "Failed to check wsrx version, is wsrx daemon running?",
+      throw new StreamGateError(
+        StreamGateErrorKind.DaemonUnavailable,
+        "Failed to check LabStreamGate version, is LabStreamGate running?",
       );
     }
   }
 
-  /**
-   * Checks the state of the wsrx client.
-   *
-   * This method will check the state of the wsrx client and return the state.
-   * It will also start the tick interval to check the state every second.
-   */
   private async check(): Promise<void> {
     try {
       const resp = await ky.get(`${this.options.api}/connect`);
       if (resp.status === 202) {
-        this.setState(WsrxState.Usable);
+        this.setState(StreamGateState.Usable);
       } else if (resp.status === 201) {
-        this.setState(WsrxState.Pending);
+        this.setState(StreamGateState.Pending);
       } else {
-        this.setState(WsrxState.Invalid);
+        this.setState(StreamGateState.Invalid);
       }
-    } catch (e) {
-      this.setState(WsrxState.Invalid);
+    } catch {
+      this.setState(StreamGateState.Invalid);
     }
   }
 
-  /**
-   * Adds a new instance to the wsrx client.
-   *
-   * It will also notify callbacks.
-   *
-   * @param instance - The instance to add.
-   * @returns The added instance.
-   */
-  public async add(instance: WsrxInstance): Promise<WsrxInstance> {
+  public async add(instance: StreamGateInstance): Promise<StreamGateInstance> {
     try {
       for (const i of this.instances) {
         if (i.remote === instance.remote) {
           return i;
         }
       }
-      const data: WsrxInstance = await ky
+      const data: StreamGateInstance = await ky
         .post(`${this.options.api}/pool`, {
           json: instance,
         })
@@ -265,31 +199,22 @@ class Wsrx {
       return data;
     } catch (e) {
       if (e instanceof HTTPError) {
-        throw new WsrxError(WsrxErrorKind.DaemonError, await e.response.text());
-      } else {
-        throw new WsrxError(
-          WsrxErrorKind.DaemonError,
-          "Failed to add instance, is wsrx daemon running?",
+        throw new StreamGateError(
+          StreamGateErrorKind.DaemonError,
+          await e.response.text(),
         );
       }
+      throw new StreamGateError(
+        StreamGateErrorKind.DaemonError,
+        "Failed to add instance, is LabStreamGate running?",
+      );
     }
   }
 
-  /**
-   * Returns the instance with the given local address.
-   *
-   * @param local - The local address of the instance.
-   * @returns The instance with the given local address, or null if not found.
-   */
-  public get(local: string): WsrxInstance | null {
+  public get(local: string): StreamGateInstance | null {
     return this.instances.find((i) => i.local === local) || null;
   }
 
-  /**
-   * Deletes the instance with the given local address.
-   *
-   * @param local - The local address of the instance to delete.
-   */
   public async delete(local: string): Promise<void> {
     try {
       await ky.delete(`${this.options.api}/pool`, {
@@ -301,63 +226,50 @@ class Wsrx {
       }
     } catch (e) {
       if (e instanceof HTTPError) {
-        throw new WsrxError(WsrxErrorKind.DaemonError, await e.response.text());
+        throw new StreamGateError(
+          StreamGateErrorKind.DaemonError,
+          await e.response.text(),
+        );
       }
-      throw new WsrxError(
-        WsrxErrorKind.DaemonError,
-        "Failed to delete instance, is wsrx daemon running?",
+      throw new StreamGateError(
+        StreamGateErrorKind.DaemonError,
+        "Failed to delete instance, is LabStreamGate running?",
       );
     }
   }
 
-  /**
-   * Returns the list of instances.
-   *
-   * @returns The list of instances.
-   */
-  public list(): WsrxInstance[] {
+  public list(): StreamGateInstance[] {
     return this.instances;
   }
 
-  /**
-   * Registers a callback to be called when the state of the wsrx client changes.
-   */
-  public onStateChange(fn: (state: WsrxState) => void): string {
+  public onStateChange(fn: (state: StreamGateState) => void): string {
     const id = nanoid();
     this.onStateChangeCallbacks.set(id, fn);
     return id;
   }
 
-  /**
-   * Unregisters a callback to be called when the state of the wsrx client changes.
-   */
   public offStateChange(id: string): void {
     this.onStateChangeCallbacks.delete(id);
   }
 
-  /**
-   * Registers a callback to be called when the list of instances changes.
-   */
-  public onInstancesChange(fn: (instances: WsrxInstance[]) => void): string {
+  public onInstancesChange(fn: (instances: StreamGateInstance[]) => void): string {
     const id = nanoid();
     this.onInstancesChangeCallbacks.set(id, fn);
     return id;
   }
 
-  /**
-   * Unregisters a callback to be called when the list of instances changes.
-   */
   public offInstancesChange(id: string): void {
     this.onInstancesChangeCallbacks.delete(id);
   }
 }
 
 export {
-  Wsrx,
-  WsrxOptions,
-  WsrxInstance,
-  WsrxState,
-  WsrxFeature,
-  WsrxErrorKind,
-  WsrxError,
+  LabStreamGateClient,
+  LabStreamGateClient as StreamGate,
+  StreamGateOptions,
+  StreamGateInstance,
+  StreamGateState,
+  StreamGateFeature,
+  StreamGateErrorKind,
+  StreamGateError,
 };

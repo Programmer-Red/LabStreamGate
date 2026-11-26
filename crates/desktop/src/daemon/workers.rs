@@ -62,7 +62,10 @@ pub async fn update_instance_latency(
 ) -> Result<i32, LatencyError> {
     let req = client
         .request(Method::OPTIONS, instance.remote.replace("ws", "http"))
-        .header("User-Agent", format!("wsrx/{}", env!("CARGO_PKG_VERSION")))
+        .header(
+            "User-Agent",
+            format!("LabStreamGate/{}", env!("CARGO_PKG_VERSION")),
+        )
         .build()?;
 
     let start_time = std::time::Instant::now();
@@ -137,10 +140,13 @@ async fn pingfall(state: ServerState, instance: InstanceData, err: LatencyError)
     }
 }
 
-/// Streams JSON log lines from `logs/wsrx.log` into the UI.
+/// Streams JSON log lines from `logs/labstreamgate.log` into the UI.
 pub async fn stream_logs(state: ServerState) {
     let proj_dirs = launcher::project_dirs();
-    let log_file = proj_dirs.data_local_dir().join("logs").join("wsrx.log");
+    let log_file = proj_dirs
+        .data_local_dir()
+        .join("logs")
+        .join("labstreamgate.log");
 
     // Wait until the log file exists (the logger creates it lazily).
     let mut lines = loop {
@@ -186,7 +192,7 @@ fn is_newer_release(tag: &str, current: &str) -> Result<bool, semver::Error> {
 pub async fn check_for_updates(state: ServerState) {
     debug!("Checking for updates...");
     let client = reqwest::Client::builder()
-        .user_agent(format!("wsrx/{}", env!("CARGO_PKG_VERSION")))
+        .user_agent(format!("LabStreamGate/{}", env!("CARGO_PKG_VERSION")))
         .build()
         .unwrap();
     let response = match client
@@ -236,12 +242,12 @@ pub async fn check_for_updates(state: ServerState) {
 /// Returns a human-readable system info string for the settings page.
 pub fn system_info() -> String {
     format!(
-        "System    : {}\nLocale    : {}\nCPU       : {}\nKernel    : {}\nWSRX      : {}",
+        "System     : {}\nLocale     : {}\nCPU        : {}\nKernel     : {}\nStreamGate : {}",
         sysinfo::System::name().unwrap_or_else(|| "Unknown".into()),
         sys_locale::get_locale().unwrap_or_else(|| "Unknown".into()),
         sysinfo::System::cpu_arch(),
         sysinfo::System::kernel_long_version(),
-        crate::WSRX_FULL_VERSION,
+        crate::STREAMGATE_FULL_VERSION,
     )
 }
 

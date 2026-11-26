@@ -38,7 +38,7 @@ pub fn enable(cx: &mut App, state: &ServerState) -> Result<(), TrayError> {
         let events = state.events.clone();
         TRAY_THREAD.get_or_init(|| {
             std::thread::Builder::new()
-                .name("wsrx-tray-events".to_string())
+                .name("labstreamgate-tray-events".to_string())
                 .spawn(move || {
                     while let Ok(event) = events_rx.recv() {
                         tracing::debug!("tray event received: {event:?}");

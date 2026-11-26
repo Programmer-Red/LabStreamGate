@@ -47,7 +47,7 @@ impl Tunnel {
             .expect("failed to bind port")
             .to_string();
 
-        info!("CREATE tcp server: {} <-wsrx-> {}", local, remote.as_ref());
+        info!("CREATE tcp server: {} <-> {}", local, remote.as_ref());
 
         let token = CancellationToken::new();
 
@@ -70,13 +70,13 @@ impl Tunnel {
 
                 if loop_token.is_cancelled() {
                     info!(
-                        "STOP tcp server: {} <-wsrx-> {}: Task cancelled",
+                        "STOP tcp server: {} <-> {}: Task cancelled",
                         loop_config.local, loop_config.remote
                     );
                     return;
                 }
 
-                info!("LINK {} <-wsrx-> {}", loop_config.remote, peer_addr);
+                info!("LINK {} <-> {}", loop_config.remote, peer_addr);
 
                 let proxy_config = loop_config.clone();
                 let proxy_token = loop_token.clone();
@@ -117,7 +117,7 @@ impl Tunnel {
 impl Drop for Tunnel {
     fn drop(&mut self) {
         info!(
-            "REMOVE tcp server: {} <-wsrx-> {}",
+            "REMOVE tcp server: {} <-> {}",
             self.config.local, self.config.remote
         );
         self.token.cancel();

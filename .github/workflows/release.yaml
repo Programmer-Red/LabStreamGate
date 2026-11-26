@@ -24,8 +24,8 @@ jobs:
         run: sudo apt-get update && sudo apt-get install -y musl-tools
       - name: Build CLI
         run: |
-          cargo build --locked --release -p wsrx --bin labstreamgate
-          cargo build --locked --release -p wsrx --bin labstreamgate --target x86_64-unknown-linux-musl
+          cargo build --locked --release -p labstreamgate --bin labstreamgate
+          cargo build --locked --release -p labstreamgate --bin labstreamgate --target x86_64-unknown-linux-musl
       - name: Package CLI
         run: |
           tar -C target/release -czf "labstreamgate-cli-${GITHUB_REF_NAME}-linux-gnu-x86_64.tar.gz" labstreamgate
@@ -50,15 +50,15 @@ jobs:
       - name: Build desktop
         run: |
           set +e
-          cargo build --locked --release -p wsrx-desktop --bin labstreamgate-desktop 2>&1 | tee /tmp/labstreamgate-desktop-build.log
+          cargo build --locked --release -p labstreamgate-desktop --bin labstreamgate-desktop 2>&1 | tee /tmp/labstreamgate-desktop-build.log
           build_code=${PIPESTATUS[0]}
           if [ "$build_code" -ne 0 ]; then
             build_detail="$(tail -n 30 /tmp/labstreamgate-desktop-build.log | tr '\n' '|' | sed 's/%/%25/g; s/\r/%0D/g; s/|/%0A/g')"
             echo "::error title=Linux desktop build failed::${build_detail}"
             exit "$build_code"
           fi
-      - name: Test desktop update detection
-        run: cargo test --locked --release -p wsrx-desktop --lib update_detection
+      - name: Test desktop library and scope logic
+        run: cargo test --locked --release -p labstreamgate-desktop --lib
       - name: Package desktop AppImage
         run: |
           fish deployments/appimage.fish

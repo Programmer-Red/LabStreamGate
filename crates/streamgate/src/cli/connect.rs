@@ -1,5 +1,6 @@
 use std::{sync::Arc, time::Duration};
 
+use labstreamgate::proxy;
 use tokio::{
     net::{TcpListener, TcpStream},
     time::timeout,
@@ -7,7 +8,6 @@ use tokio::{
 use tokio_util::sync::CancellationToken;
 use tracing::{debug, error, info};
 use url::Url;
-use wsrx::proxy;
 
 use crate::cli::logger::init_logger;
 
@@ -93,7 +93,7 @@ pub async fn launch(
 
 async fn proxy_ws_addr(
     addr: impl AsRef<str>, tcp: TcpStream, token: CancellationToken,
-) -> Result<(), wsrx::Error> {
+) -> Result<(), labstreamgate::Error> {
     let peer_addr = tcp.peer_addr().unwrap();
     let (ws, _) = timeout(
         Duration::from_secs(15),

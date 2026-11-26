@@ -10,7 +10,7 @@ mod cli;
 /// LabStreamGate is a controlled TCP-over-WebSocket gateway for CTF platforms.
 #[derive(Parser)]
 #[command(name = "labstreamgate", bin_name = "labstreamgate", version, about)]
-enum WsrxCli {
+enum StreamGateCli {
     #[clap(alias("d"))]
     /// Launch the local LabStreamGate desktop controller daemon.
     Daemon {
@@ -58,49 +58,50 @@ enum WsrxCli {
         #[clap(short, long)]
         secret: Option<String>,
         /// Persist the platform tunnel registry to this JSON file.
-        #[clap(long, env = "WSRX_STATE_FILE")]
+        #[clap(long, env = "STREAMGATE_STATE_FILE")]
         state_file: Option<String>,
-        /// Only allow tunnel targets on these IP addresses. Repeat as needed.
+        /// Only allow tunnel targets on these IP addresses or hostnames. Repeat as needed.
         #[clap(
             long = "allow-target-host",
-            env = "WSRX_ALLOWED_TARGET_HOSTS",
+            env = "STREAMGATE_ALLOWED_TARGET_HOSTS",
             value_delimiter = ','
         )]
         allowed_target_hosts: Vec<String>,
-        /// Maximum number of simultaneous WebSocket tunnel connections.
-        #[clap(long, env = "WSRX_MAX_CONNECTIONS", default_value_t = 4096)]
-        max_connections: usize,
+        /// Maximum number of simultaneous WebSocket tunnel connections (default: 4096).
+        #[clap(long, env = "STREAMGATE_MAX_CONNECTIONS")]
+        max_connections: Option<usize>,
         /// Root directory for connection audit logs and optional PCAP files.
-        #[clap(long, env = "WSRX_CAPTURE_ROOT")]
+        #[clap(long, env = "STREAMGATE_CAPTURE_ROOT")]
         capture_root: Option<String>,
-        /// Maximum captured payload bytes per connection.
-        #[clap(long, env = "WSRX_MAX_CAPTURE_BYTES", default_value_t = 67_108_864)]
-        max_capture_bytes: u64,
-        /// Number of days to retain PCAP files.
-        #[clap(long, env = "WSRX_CAPTURE_RETENTION_DAYS", default_value_t = 7)]
-        capture_retention_days: u64,
-        /// Maximum total bytes retained across all PCAP files.
-        #[clap(
-            long,
-            env = "WSRX_CAPTURE_MAX_TOTAL_BYTES",
-            default_value_t = 21_474_836_480
-        )]
-        capture_max_total_bytes: u64,
-        /// Maximum simultaneous connections for one tunnel.
-        #[clap(long, env = "WSRX_MAX_CONNECTIONS_PER_TUNNEL", default_value_t = 32)]
-        max_connections_per_tunnel: usize,
-        /// Maximum lifetime of one proxied connection in seconds.
-        #[clap(long, env = "WSRX_CONNECTION_TIMEOUT_SECONDS", default_value_t = 1800)]
-        connection_timeout_seconds: u64,
+        /// Maximum captured payload bytes per connection (default: 67108864).
+        #[clap(long, env = "STREAMGATE_MAX_CAPTURE_BYTES")]
+        max_capture_bytes: Option<u64>,
+        /// Number of days to retain PCAP files (default: 7).
+        #[clap(long, env = "STREAMGATE_CAPTURE_RETENTION_DAYS")]
+        capture_retention_days: Option<u64>,
+        /// Maximum total bytes retained across all PCAP files (default: 21474836480).
+        #[clap(long, env = "STREAMGATE_CAPTURE_MAX_TOTAL_BYTES")]
+        capture_max_total_bytes: Option<u64>,
+        /// Maximum simultaneous connections for one tunnel (default: 32).
+        #[clap(long, env = "STREAMGATE_MAX_CONNECTIONS_PER_TUNNEL")]
+        max_connections_per_tunnel: Option<usize>,
+        /// Maximum lifetime of one proxied connection in seconds (default: 1800).
+        #[clap(long, env = "STREAMGATE_CONNECTION_TIMEOUT_SECONDS")]
+        connection_timeout_seconds: Option<u64>,
         /// Log in json format.
         #[clap(short, long)]
         log_json: Option<bool>,
     },
 }
 
+#[cfg(feature = "client")]
+fn legacy_env_parse<T: std::str::FromStr>(key: &str) -> Option<T> {
+    std::env::var(key).ok()?.trim().parse::<T>().ok()
+}
+
 #[tokio::main]
 async fn main() {
-    let cli = WsrxCli::parse();
+    let cli = StreamGateCli::parse();
     match crypto::aws_lc_rs::default_provider().install_default() {
         Ok(_) => info!("using `AWS Libcrypto` as default crypto backend."),
         Err(err) => {
@@ -119,20 +120,20 @@ async fn main() {
     }
     #[cfg(feature = "client")]
     match cli {
-        WsrxCli::Daemon {
+        StreamGateCli::Daemon {
             host,
             port,
             secret,
             log_json,
             heartbeat,
         } => cli::daemon::launch(host, port, secret, log_json, heartbeat).await,
-        WsrxCli::Connect {
+        StreamGateCli::Connect {
             address,
             host,
             port,
             log_json,
         } => cli::connect::launch(address, host, port, log_json).await,
-        WsrxCli::Serve {
+        StreamGateCli::Serve {
             host,
             port,
             secret,
@@ -147,6 +148,35 @@ async fn main() {
             connection_timeout_seconds,
             log_json,
         } => {
+            let state_file = state_file.or_else(|| std::env::var("WSRX_STATE_FILE").ok());
+            let allowed_target_hosts = if allowed_target_hosts.is_empty() {
+                std::env::var("WSRX_ALLOWED_TARGET_HOSTS")
+                    .ok()
+                    .map(|raw| raw.split(',').map(str::to_owned).collect())
+                    .unwrap_or_default()
+            } else {
+                allowed_target_hosts
+            };
+            let max_connections = max_connections
+                .or_else(|| legacy_env_parse("WSRX_MAX_CONNECTIONS"))
+                .unwrap_or(4096);
+            let capture_root = capture_root.or_else(|| std::env::var("WSRX_CAPTURE_ROOT").ok());
+            let max_capture_bytes = max_capture_bytes
+                .or_else(|| legacy_env_parse("WSRX_MAX_CAPTURE_BYTES"))
+                .unwrap_or(67_108_864);
+            let capture_retention_days = capture_retention_days
+                .or_else(|| legacy_env_parse("WSRX_CAPTURE_RETENTION_DAYS"))
+                .unwrap_or(7);
+            let capture_max_total_bytes = capture_max_total_bytes
+                .or_else(|| legacy_env_parse("WSRX_CAPTURE_MAX_TOTAL_BYTES"))
+                .unwrap_or(21_474_836_480);
+            let max_connections_per_tunnel = max_connections_per_tunnel
+                .or_else(|| legacy_env_parse("WSRX_MAX_CONNECTIONS_PER_TUNNEL"))
+                .unwrap_or(32);
+            let connection_timeout_seconds = connection_timeout_seconds
+                .or_else(|| legacy_env_parse("WSRX_CONNECTION_TIMEOUT_SECONDS"))
+                .unwrap_or(1800);
+
             cli::serve::launch(
                 host,
                 port,
@@ -166,5 +196,5 @@ async fn main() {
         }
     }
     #[cfg(not(feature = "client"))]
-    error!("wsrx client is not enabled.");
+    error!("LabStreamGate client feature is not enabled.");
 }
