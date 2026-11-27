@@ -266,7 +266,7 @@ fn sanitize_field(value: &str) -> String {
 fn sanitize_ascii_header(value: &str) -> String {
     value
         .chars()
-        .filter(|ch| ch.is_ascii() && (*ch as u8) >= 0x20 && (*ch as u8) <= 0x7E)
+        .filter(|&ch| ch.is_ascii() && (0x20..=0x7E).contains(&(ch as u8)))
         .take(80)
         .collect::<String>()
         .trim()
@@ -623,14 +623,14 @@ pub fn sha256_hex(data: &[u8]) -> String {
         }
 
         let [mut a, mut b, mut c, mut d, mut e, mut f, mut g, mut h] = state;
-        for i in 0..64 {
+        for (&k, &wi) in SHA256_K.iter().zip(w.iter()) {
             let s1 = e.rotate_right(6) ^ e.rotate_right(11) ^ e.rotate_right(25);
             let ch = (e & f) ^ ((!e) & g);
             let temp1 = h
                 .wrapping_add(s1)
                 .wrapping_add(ch)
-                .wrapping_add(SHA256_K[i])
-                .wrapping_add(w[i]);
+                .wrapping_add(k)
+                .wrapping_add(wi);
             let s0 = a.rotate_right(2) ^ a.rotate_right(13) ^ a.rotate_right(22);
             let maj = (a & b) ^ (a & c) ^ (b & c);
             let temp2 = s0.wrapping_add(maj);

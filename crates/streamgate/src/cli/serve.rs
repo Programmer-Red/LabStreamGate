@@ -121,6 +121,7 @@ pub async fn launch(
 }
 
 type TunnelRegistry = HashMap<String, TunnelRecord>;
+type RejectionThrottle = HashMap<(String, String), u64>;
 type RegistryError = (StatusCode, String);
 
 #[derive(Clone, Debug, Deserialize, Serialize)]
@@ -244,7 +245,7 @@ pub struct GlobalState {
     capture_root: PathBuf,
     max_capture_bytes: u64,
     per_tunnel_connections: Arc<StdMutex<HashMap<String, usize>>>,
-    rejection_throttle: Arc<StdMutex<HashMap<(String, String), u64>>>,
+    rejection_throttle: Arc<StdMutex<RejectionThrottle>>,
     max_connections_per_tunnel: usize,
     connection_timeout: Duration,
     audit_lock: Arc<tokio::sync::Mutex<()>>,
