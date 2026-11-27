@@ -3,9 +3,9 @@ use std::sync::Arc;
 use serde::{Deserialize, Serialize};
 use tokio::{net::TcpListener, task::JoinHandle};
 use tokio_util::sync::CancellationToken;
-use tracing::{error, info};
+use tracing::{error, info, warn};
 
-use super::proxy;
+use super::{device::build_ws_client_request, proxy};
 
 /// Configuration for a tunnel, contains the local and remote addresses.
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -40,8 +40,21 @@ impl Serialize for Tunnel {
 }
 
 impl Tunnel {
-    /// Creates a new `Tunnel` instance.
+    /// Creates a new `Tunnel` instance with default client metadata.
     pub fn new(remote: impl AsRef<str>, listener: TcpListener) -> Self {
+        Self::new_with_metadata(
+            remote,
+            listener,
+            format!("StreamGate {}", env!("CARGO_PKG_VERSION")),
+            None,
+        )
+    }
+
+    /// Creates a new `Tunnel` instance carrying explicit client and browser hints.
+    pub fn new_with_metadata(
+        remote: impl AsRef<str>, listener: TcpListener, client_label: String,
+        browser_hint: Option<String>,
+    ) -> Self {
         let local = listener
             .local_addr()
             .expect("failed to bind port")
@@ -57,6 +70,8 @@ impl Tunnel {
         };
 
         let loop_config = Arc::new(config.clone());
+        let client_label = Arc::new(client_label);
+        let browser_hint = Arc::new(browser_hint);
         let loop_token = token.clone();
         let handle = tokio::spawn(async move {
             loop {
@@ -79,13 +94,34 @@ impl Tunnel {
                 info!("LINK {} <-> {}", loop_config.remote, peer_addr);
 
                 let proxy_config = loop_config.clone();
+                let client_label = client_label.clone();
+                let browser_hint = browser_hint.clone();
                 let proxy_token = loop_token.clone();
 
                 tokio::spawn(async move {
-                    use tokio_tungstenite::connect_async;
+                    use tokio_tungstenite::{connect_async, tungstenite::Error as WsError};
 
-                    let ws = match connect_async(proxy_config.remote.as_str()).await {
+                    let request = match build_ws_client_request(
+                        proxy_config.remote.as_str(),
+                        client_label.as_str(),
+                        browser_hint.as_deref(),
+                    ) {
+                        Ok(req) => req,
+                        Err(e) => {
+                            error!("Invalid remote tunnel URL {}: {e}", proxy_config.remote);
+                            return;
+                        }
+                    };
+
+                    let ws = match connect_async(request).await {
                         Ok((ws, _)) => ws,
+                        Err(WsError::Http(resp)) if resp.status().as_u16() == 403 => {
+                            warn!(
+                                "该靶机通道已绑定其他设备，拒绝在当前设备上复用同一 WSS 链接 ({})",
+                                proxy_config.remote
+                            );
+                            return;
+                        }
                         Err(e) => {
                             error!("Failed to connect to {}: {}", proxy_config.remote, e);
                             return;

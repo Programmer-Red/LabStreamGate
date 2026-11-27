@@ -3,6 +3,7 @@
 //! A simple crate that proxies pure TCP connections to WebSocket connections
 //! and vice versa.
 
+pub mod device;
 pub mod proxy;
 
 #[cfg(feature = "client")]

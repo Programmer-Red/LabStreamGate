@@ -156,6 +156,7 @@ pub(crate) fn render_get_started(
                                                 local,
                                                 latency: -1,
                                                 scope_host: "default-scope".to_string(),
+                                                browser: None,
                                             };
                                             let _ = daemon::launch_instance(&state, &data).await;
                                         });

@@ -60,12 +60,17 @@ pub enum LatencyError {
 pub async fn update_instance_latency(
     instance: &InstanceData, client: &reqwest::Client,
 ) -> Result<i32, LatencyError> {
+    let profile = labstreamgate::device::local_device_profile(
+        &format!("Desktop {}", env!("CARGO_PKG_VERSION")),
+        instance.browser.as_deref(),
+    );
     let req = client
         .request(Method::OPTIONS, instance.remote.replace("ws", "http"))
         .header(
             "User-Agent",
             format!("LabStreamGate/{}", env!("CARGO_PKG_VERSION")),
         )
+        .header(labstreamgate::device::HEADER_DEVICE_ID, profile.device_id)
         .build()?;
 
     let start_time = std::time::Instant::now();

@@ -94,15 +94,30 @@ pub async fn launch(
 async fn proxy_ws_addr(
     addr: impl AsRef<str>, tcp: TcpStream, token: CancellationToken,
 ) -> Result<(), labstreamgate::Error> {
+    use tokio_tungstenite::tungstenite::Error as WsError;
+
     let peer_addr = tcp.peer_addr().unwrap();
-    let (ws, _) = timeout(
+    let client_label = format!("CLI {}", env!("CARGO_PKG_VERSION"));
+    let request =
+        labstreamgate::device::build_ws_client_request(addr.as_ref(), &client_label, None)
+            .map_err(|e| std::io::Error::new(std::io::ErrorKind::InvalidInput, e.to_string()))?;
+    let connect_res = timeout(
         Duration::from_secs(15),
-        tokio_tungstenite::connect_async(addr.as_ref()),
+        tokio_tungstenite::connect_async(request),
     )
     .await
-    .map_err(|_| {
-        std::io::Error::new(std::io::ErrorKind::TimedOut, "连接远端通道超时（15 秒）")
-    })??;
+    .map_err(|_| std::io::Error::new(std::io::ErrorKind::TimedOut, "连接远端通道超时（15 秒）"))?;
+    let (ws, _) = match connect_res {
+        Ok(pair) => pair,
+        Err(WsError::Http(resp)) if resp.status().as_u16() == 403 => {
+            return Err(std::io::Error::new(
+                std::io::ErrorKind::PermissionDenied,
+                "该靶机 WSS 链接已被其他设备开启并绑定，禁止跨设备复用同一链接",
+            )
+            .into());
+        }
+        Err(err) => return Err(err.into()),
+    };
     proxy(ws.into(), tcp, token).await?;
     info!(peer = %peer_addr, "remote tunnel connection closed");
     Ok(())

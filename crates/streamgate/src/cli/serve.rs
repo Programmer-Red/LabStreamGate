@@ -21,7 +21,11 @@ use axum::{
     response::{IntoResponse, Response},
     routing::get,
 };
-use labstreamgate::{ProxyStats, TrafficDirection, TrafficObserver, proxy_observed};
+use labstreamgate::{
+    ProxyStats, TrafficDirection, TrafficObserver,
+    device::{DeviceMetadata, HEADER_DEVICE_ID, HEADER_DEVICE_INFO, parse_incoming_device},
+    proxy_observed,
+};
 use serde::{Deserialize, Serialize};
 use subtle::ConstantTimeEq;
 use tokio::{
@@ -31,7 +35,7 @@ use tokio::{
 };
 use tokio_util::sync::CancellationToken;
 use tower_http::trace::TraceLayer;
-use tracing::{Span, debug, error, info};
+use tracing::{Span, debug, error, info, warn};
 
 use crate::cli::{
     capture::{
@@ -84,6 +88,7 @@ pub async fn launch(
         capture_root,
         max_capture_bytes,
         per_tunnel_connections: Arc::new(StdMutex::new(HashMap::new())),
+        rejection_throttle: Arc::new(StdMutex::new(HashMap::new())),
         max_connections_per_tunnel: max_connections_per_tunnel.max(1),
         connection_timeout: Duration::from_secs(connection_timeout_seconds.max(1)),
         audit_lock: Arc::new(tokio::sync::Mutex::new(())),
@@ -134,6 +139,12 @@ struct TunnelRecord {
     competition_id: Option<String>,
     #[serde(default)]
     capture: bool,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    bound_device_id: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    bound_device_summary: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    bound_at: Option<u64>,
 }
 
 impl TunnelRecord {
@@ -151,6 +162,16 @@ struct ConnectionAudit {
     user_id: String,
     competition_id: Option<String>,
     client_ip: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    device_id: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    device_os: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    device_model: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    client_agent: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    device_summary: Option<String>,
     target: String,
     started_at: u128,
     ended_at: u128,
@@ -223,6 +244,7 @@ pub struct GlobalState {
     capture_root: PathBuf,
     max_capture_bytes: u64,
     per_tunnel_connections: Arc<StdMutex<HashMap<String, usize>>>,
+    rejection_throttle: Arc<StdMutex<HashMap<(String, String), u64>>>,
     max_connections_per_tunnel: usize,
     connection_timeout: Duration,
     audit_lock: Arc<tokio::sync::Mutex<()>>,
@@ -325,15 +347,27 @@ async fn launch_tunnel(
         user_id: req.user_id,
         competition_id: req.competition_id,
         capture: req.capture,
+        bound_device_id: None,
+        bound_device_summary: None,
+        bound_at: None,
     };
-    let saved = record.clone();
-    update_registry(&state, move |registry| {
-        registry.insert(req.key, saved);
-        Ok(((), true))
+    let key = req.key;
+    let saved = update_registry(&state, move |registry| {
+        let mut next_record = record;
+        let now = unix_timestamp();
+        if let Some(existing) = registry.get(&key)
+            && !existing.is_expired(now)
+        {
+            next_record.bound_device_id = existing.bound_device_id.clone();
+            next_record.bound_device_summary = existing.bound_device_summary.clone();
+            next_record.bound_at = existing.bound_at;
+        }
+        registry.insert(key, next_record.clone());
+        Ok((next_record, true))
     })
     .await?;
 
-    Ok((StatusCode::CREATED, Json(record)))
+    Ok((StatusCode::CREATED, Json(saved)))
 }
 
 async fn get_tunnels(State(state): State<GlobalState>) -> impl IntoResponse {
@@ -373,8 +407,9 @@ async fn process_traffic(
     State(state): State<GlobalState>, AxumPath(key): AxumPath<String>, headers: HeaderMap,
     ConnectInfo(peer): ConnectInfo<SocketAddr>, ws: WebSocketUpgrade,
 ) -> Result<impl IntoResponse, (StatusCode, String)> {
-    let record = active_record(&state, &key).await?;
     let client = forwarded_client(&headers, peer);
+    let device = extract_device(&headers, client);
+    let record = bind_or_verify_device(&state, &key, client, &device).await?;
     let tunnel_permit = TunnelConnectionPermit::acquire(
         state.per_tunnel_connections.clone(),
         key.clone(),
@@ -395,11 +430,7 @@ async fn process_traffic(
         let _permit = permit;
         let _tunnel_permit = tunnel_permit;
         let connection_id = random_connection_id();
-        let instance_id = if record.instance_id.is_empty() {
-            key.chars().take(32).collect()
-        } else {
-            record.instance_id.clone()
-        };
+        let instance_id = resolve_audit_instance_id(&record, &key);
         let started_at = unix_timestamp_millis();
         let mut stats = ProxyStats::default();
         let mut result = "completed".to_string();
@@ -416,6 +447,7 @@ async fn process_traffic(
                     &instance_id,
                     &connection_id,
                     client,
+                    &device,
                     started_at,
                     stats,
                     result,
@@ -435,6 +467,7 @@ async fn process_traffic(
                     &instance_id,
                     &connection_id,
                     client,
+                    &device,
                     started_at,
                     stats,
                     result,
@@ -474,6 +507,7 @@ async fn process_traffic(
             &instance_id,
             &connection_id,
             client,
+            &device,
             started_at,
             0,
             ProxyStats::default(),
@@ -517,6 +551,7 @@ async fn process_traffic(
             &instance_id,
             &connection_id,
             client,
+            &device,
             started_at,
             stats,
             result,
@@ -526,6 +561,130 @@ async fn process_traffic(
         )
         .await;
     }))
+}
+
+fn resolve_audit_instance_id(record: &TunnelRecord, key: &str) -> String {
+    if record.instance_id.is_empty() {
+        key.chars().take(32).collect()
+    } else {
+        record.instance_id.clone()
+    }
+}
+
+fn extract_device(headers: &HeaderMap, client: SocketAddr) -> DeviceMetadata {
+    parse_incoming_device(
+        header_str(headers, HEADER_DEVICE_ID),
+        header_str(headers, HEADER_DEVICE_INFO),
+        header_str(headers, "user-agent"),
+        header_str(headers, "accept-language"),
+        client.ip(),
+    )
+}
+
+fn header_str<'a>(headers: &'a HeaderMap, name: &str) -> Option<&'a str> {
+    headers.get(name).and_then(|value| value.to_str().ok())
+}
+
+async fn bind_or_verify_device(
+    state: &GlobalState, key: &str, client: SocketAddr, device: &DeviceMetadata,
+) -> Result<TunnelRecord, (StatusCode, String)> {
+    let current = active_record(state, key).await?;
+    if current.bound_device_id.as_deref() == Some(device.device_id.as_str()) {
+        return Ok(current);
+    }
+    if current.bound_device_id.is_some() {
+        record_device_rejection(state, &current, key, client, device).await;
+        return Err((
+            StatusCode::FORBIDDEN,
+            "tunnel is already bound to another device".into(),
+        ));
+    }
+
+    let owned_key = key.to_owned();
+    let device_id = device.device_id.clone();
+    let device_summary = device.summary();
+    let outcome = update_registry(state, move |registry| {
+        let now = unix_timestamp();
+        let Some(entry) = registry.get_mut(&owned_key) else {
+            return Err((StatusCode::NOT_FOUND, "tunnel not found".into()));
+        };
+        if entry.is_expired(now) {
+            registry.remove(&owned_key);
+            return Ok((Err(None), true));
+        }
+        match entry.bound_device_id.as_deref() {
+            None => {
+                entry.bound_device_id = Some(device_id);
+                entry.bound_device_summary = Some(device_summary);
+                entry.bound_at = Some(now);
+                Ok((Ok(entry.clone()), true))
+            }
+            Some(existing) if existing == device_id => Ok((Ok(entry.clone()), false)),
+            Some(_) => Ok((Err(Some(entry.clone())), false)),
+        }
+    })
+    .await?;
+
+    match outcome {
+        Ok(bound_record) => Ok(bound_record),
+        Err(None) => Err((StatusCode::GONE, "tunnel expired".into())),
+        Err(Some(conflicting)) => {
+            record_device_rejection(state, &conflicting, key, client, device).await;
+            Err((
+                StatusCode::FORBIDDEN,
+                "tunnel is already bound to another device".into(),
+            ))
+        }
+    }
+}
+
+async fn record_device_rejection(
+    state: &GlobalState, record: &TunnelRecord, key: &str, client: SocketAddr,
+    device: &DeviceMetadata,
+) {
+    let now_sec = unix_timestamp();
+    let should_log = if let Ok(mut throttle) = state.rejection_throttle.lock() {
+        let map_key = (key.to_owned(), device.device_id.clone());
+        match throttle.get(&map_key).copied() {
+            Some(last) if now_sec.saturating_sub(last) < 3 => false,
+            _ => {
+                throttle.insert(map_key, now_sec);
+                true
+            }
+        }
+    } else {
+        true
+    };
+
+    warn!(
+        instance_id = %record.instance_id,
+        client_ip = %client.ip(),
+        attempted_device = %device.device_id,
+        bound_device = ?record.bound_device_id,
+        "rejected cross-device tunnel connection"
+    );
+
+    if should_log {
+        let instance_id = resolve_audit_instance_id(record, key);
+        let connection_id = random_connection_id();
+        let now_ms = unix_timestamp_millis();
+        write_audit_with_end(
+            state,
+            record,
+            &instance_id,
+            &connection_id,
+            client,
+            device,
+            now_ms,
+            now_ms,
+            ProxyStats::default(),
+            "rejected_device_mismatch".into(),
+            None,
+            0,
+            false,
+        )
+        .await;
+    }
 }
 
 struct TunnelConnectionPermit {
@@ -572,8 +731,8 @@ impl Drop for TunnelConnectionPermit {
 #[allow(clippy::too_many_arguments)]
 async fn write_audit(
     state: &GlobalState, record: &TunnelRecord, instance_id: &str, connection_id: &str,
-    client: SocketAddr, started_at: u128, stats: ProxyStats, result: String,
-    capture_path: Option<String>, captured_bytes: u64, capture_truncated: bool,
+    client: SocketAddr, device: &DeviceMetadata, started_at: u128, stats: ProxyStats,
+    result: String, capture_path: Option<String>, captured_bytes: u64, capture_truncated: bool,
 ) {
     write_audit_with_end(
         state,
@@ -581,6 +740,7 @@ async fn write_audit(
         instance_id,
         connection_id,
         client,
+        device,
         started_at,
         unix_timestamp_millis(),
         stats,
@@ -595,9 +755,17 @@ async fn write_audit(
 #[allow(clippy::too_many_arguments)]
 async fn write_audit_with_end(
     state: &GlobalState, record: &TunnelRecord, instance_id: &str, connection_id: &str,
-    client: SocketAddr, started_at: u128, ended_at: u128, stats: ProxyStats, result: String,
-    capture_path: Option<String>, captured_bytes: u64, capture_truncated: bool,
+    client: SocketAddr, device: &DeviceMetadata, started_at: u128, ended_at: u128,
+    stats: ProxyStats, result: String, capture_path: Option<String>, captured_bytes: u64,
+    capture_truncated: bool,
 ) {
+    let non_empty = |s: &str| (!s.trim().is_empty()).then(|| s.trim().to_string());
+    let agent = match (non_empty(&device.client), non_empty(&device.browser)) {
+        (Some(c), Some(b)) => Some(format!("{c} · {b}")),
+        (Some(c), None) => Some(c),
+        (None, Some(b)) => Some(b),
+        (None, None) => None,
+    };
     let audit = ConnectionAudit {
         connection_id: connection_id.into(),
         instance_id: instance_id.into(),
@@ -605,6 +773,11 @@ async fn write_audit_with_end(
         user_id: record.user_id.clone(),
         competition_id: record.competition_id.clone(),
         client_ip: client.ip().to_string(),
+        device_id: non_empty(&device.device_id),
+        device_os: non_empty(&device.os),
+        device_model: non_empty(&device.model),
+        client_agent: agent,
+        device_summary: non_empty(&device.summary()),
         target: record.target.clone(),
         started_at,
         ended_at,
@@ -643,9 +816,19 @@ fn forwarded_client(headers: &HeaderMap, peer: SocketAddr) -> SocketAddr {
         .unwrap_or(peer)
 }
 
-async fn ping(State(state): State<GlobalState>, AxumPath(key): AxumPath<String>) -> StatusCode {
+async fn ping(
+    State(state): State<GlobalState>, AxumPath(key): AxumPath<String>, headers: HeaderMap,
+) -> StatusCode {
     match active_record(&state, &key).await {
-        Ok(_) => StatusCode::OK,
+        Ok(record) => {
+            if let Some(ref bound_id) = record.bound_device_id
+                && let Some(req_id) = header_str(&headers, HEADER_DEVICE_ID)
+                && !req_id.trim().eq_ignore_ascii_case(bound_id)
+            {
+                return StatusCode::FORBIDDEN;
+            }
+            StatusCode::OK
+        }
         Err((status, _)) => status,
     }
 }
@@ -836,6 +1019,10 @@ fn internal_io_error(err: std::io::Error) -> (StatusCode, String) {
 }
 
 async fn remove_expired(state: &GlobalState) {
+    let now = unix_timestamp();
+    if let Ok(mut throttle) = state.rejection_throttle.lock() {
+        throttle.retain(|_, ts| now.saturating_sub(*ts) < 60);
+    }
     if let Err(err) = update_registry(state, |registry| {
         let now = unix_timestamp();
         let before = registry.len();
@@ -872,10 +1059,97 @@ mod tests {
             connection_slots: Arc::new(Semaphore::new(1)),
             max_capture_bytes: 0,
             per_tunnel_connections: Arc::new(StdMutex::new(HashMap::new())),
+            rejection_throttle: Arc::new(StdMutex::new(HashMap::new())),
             max_connections_per_tunnel: 1,
             connection_timeout: Duration::from_secs(1),
             audit_lock: Arc::new(tokio::sync::Mutex::new(())),
         }
+    }
+
+    #[tokio::test]
+    async fn first_device_binds_tunnel_and_second_device_is_rejected() {
+        let dir =
+            std::env::temp_dir().join(format!("labstreamgate-dev-{}", random_connection_id()));
+        let path = dir.join("registry.json");
+        let state = test_state(path.clone());
+        let key = "test-tunnel-device-lock-0001";
+        let expires_at = unix_timestamp() + 600;
+
+        let mut req = tunnel_request(key, expires_at);
+        req.instance_id =
+            "container:0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef".into();
+        launch_tunnel(State(state.clone()), Json(req))
+            .await
+            .unwrap();
+
+        let dev_a = DeviceMetadata {
+            device_id: "sg1_aaaaaaaaaaaaaaaa".into(),
+            os: "macOS 15.3 (aarch64)".into(),
+            model: "Mac14,15".into(),
+            client: "Desktop 0.6.10".into(),
+            browser: "Chrome 134".into(),
+        };
+        let dev_b = DeviceMetadata {
+            device_id: "sg1_bbbbbbbbbbbbbbbb".into(),
+            os: "Windows 11 Build 26100 (x86_64)".into(),
+            model: "LENOVO 82Y9".into(),
+            client: "Desktop 0.6.10".into(),
+            browser: "Edge 134".into(),
+        };
+        let peer_a: SocketAddr = "203.0.113.10:50000".parse().unwrap();
+        let peer_b: SocketAddr = "198.51.100.22:50001".parse().unwrap();
+
+        let first = bind_or_verify_device(&state, key, peer_a, &dev_a)
+            .await
+            .unwrap();
+        assert_eq!(
+            first.bound_device_id.as_deref(),
+            Some("sg1_aaaaaaaaaaaaaaaa")
+        );
+
+        // Subsequent connections from the same device succeed.
+        let second = bind_or_verify_device(&state, key, peer_a, &dev_a)
+            .await
+            .unwrap();
+        assert_eq!(
+            second.bound_device_id.as_deref(),
+            Some("sg1_aaaaaaaaaaaaaaaa")
+        );
+
+        // Any other device attempting to open the same WSS tunnel is rejected and audited.
+        let rejected = bind_or_verify_device(&state, key, peer_b, &dev_b)
+            .await
+            .unwrap_err();
+        assert_eq!(rejected.0, StatusCode::FORBIDDEN);
+
+        // Renewing the container tunnel preserves the bound device.
+        let mut renew_req = tunnel_request(key, expires_at + 600);
+        renew_req.instance_id =
+            "container:0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef".into();
+        launch_tunnel(State(state.clone()), Json(renew_req))
+            .await
+            .unwrap();
+
+        let still_rejected = bind_or_verify_device(&state, key, peer_b, &dev_b)
+            .await
+            .unwrap_err();
+        assert_eq!(still_rejected.0, StatusCode::FORBIDDEN);
+        assert_eq!(
+            load_registry(Some(&path)).await[key]
+                .bound_device_id
+                .as_deref(),
+            Some("sg1_aaaaaaaaaaaaaaaa")
+        );
+
+        let audit_file = dir.join("audit").join(
+            "container0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef.jsonl",
+        );
+        let audit_content = tokio::fs::read_to_string(audit_file).await.unwrap();
+        assert!(audit_content.contains("\"result\":\"rejected_device_mismatch\""));
+        assert!(audit_content.contains("\"deviceId\":\"sg1_bbbbbbbbbbbbbbbb\""));
+        assert!(audit_content.contains("LENOVO 82Y9"));
+
+        tokio::fs::remove_dir_all(dir).await.unwrap();
     }
 
     fn tunnel_request(key: &str, expires_at: u64) -> TunnelRequest {

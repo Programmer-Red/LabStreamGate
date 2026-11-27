@@ -172,10 +172,12 @@ pub struct ProxyInstance {
 
 impl ProxyInstance {
     pub fn new(
-        label: impl AsRef<str>, scope_host: impl AsRef<str>, listener: tokio::net::TcpListener,
-        remote: impl AsRef<str>,
+        label: impl AsRef<str>, scope_host: impl AsRef<str>, browser: Option<String>,
+        listener: tokio::net::TcpListener, remote: impl AsRef<str>,
     ) -> Self {
-        let tunnel = Tunnel::new(remote.as_ref(), listener);
+        let client_label = format!("Desktop {}", env!("CARGO_PKG_VERSION"));
+        let tunnel =
+            Tunnel::new_with_metadata(remote.as_ref(), listener, client_label, browser.clone());
 
         Self {
             data: InstanceData {
@@ -184,6 +186,7 @@ impl ProxyInstance {
                 local: tunnel.local.clone(),
                 latency: -1,
                 scope_host: scope_host.as_ref().to_string(),
+                browser,
             },
             _tunnel: tunnel,
         }
@@ -247,6 +250,11 @@ pub fn setup_crypto() {
 /// Creates the tokio runtime and shared state, then starts the background
 /// workers (API server, latency monitor, log streaming, update check).
 pub fn spawn_background() -> (ServerState, Receiver<UiEvent>) {
+    if let Some(long_os) = sysinfo::System::long_os_version() {
+        let arch = sysinfo::System::cpu_arch();
+        labstreamgate::device::set_host_os_override(format!("{long_os} ({arch})"));
+    }
+
     let (events, events_rx) = unbounded();
     let state = ServerState {
         instances: Arc::new(RwLock::new(vec![])),
@@ -462,6 +470,7 @@ pub async fn launch_instance(
     let instance = ProxyInstance::new(
         instance_data.label.clone(),
         scope.clone(),
+        instance_data.browser.clone(),
         listener,
         remote_trimmed,
     );

@@ -18,6 +18,8 @@ pub struct InstanceData {
     pub latency: i32,
     #[serde(default)]
     pub scope_host: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub browser: Option<String>,
 }
 
 /// A scope (a website origin) that requested / obtained control of LabStreamGate.

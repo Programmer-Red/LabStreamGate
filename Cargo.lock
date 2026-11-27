@@ -3604,7 +3604,7 @@ dependencies = [
 
 [[package]]
 name = "labstreamgate"
-version = "0.6.9"
+version = "0.6.10"
 dependencies = [
  "axum",
  "chrono",
@@ -3629,7 +3629,7 @@ dependencies = [
 
 [[package]]
 name = "labstreamgate-desktop"
-version = "0.6.9"
+version = "0.6.10"
 dependencies = [
  "async-channel",
  "axum",
