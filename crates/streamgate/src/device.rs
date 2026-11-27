@@ -122,6 +122,7 @@ pub fn local_device_profile(client_label: &str, browser_hint: Option<&str>) -> D
 
 /// Builds a WebSocket client handshake request populated with device identity headers.
 #[cfg(feature = "client")]
+#[allow(clippy::result_large_err)]
 pub fn build_ws_client_request(
     url: &str, client_label: &str, browser_hint: Option<&str>,
 ) -> Result<
@@ -517,12 +518,13 @@ fn combine_vendor_product(vendor_raw: &str, product_raw: &str) -> String {
     let product = clean_part(product_raw);
     if vendor.is_empty() {
         product
-    } else if product.is_empty()
-        || product
-            .to_ascii_lowercase()
-            .starts_with(&vendor.to_ascii_lowercase())
+    } else if product.is_empty() {
+        vendor
+    } else if product
+        .to_ascii_lowercase()
+        .starts_with(&vendor.to_ascii_lowercase())
     {
-        if product.is_empty() { vendor } else { product }
+        product
     } else {
         format!("{vendor} {product}")
     }
